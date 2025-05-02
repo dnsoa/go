@@ -1,7 +1,6 @@
 package sqldb
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -55,12 +54,4 @@ func fields(t reflect.Type) []field {
 		cachedFields.Store(newCache)
 	}
 	return fields
-}
-
-func baseType(t reflect.Type, expected reflect.Kind) (reflect.Type, error) {
-	t = deref(t)
-	if t.Kind() != expected {
-		return nil, fmt.Errorf("expected %s but got %s", expected, t.Kind())
-	}
-	return t, nil
 }

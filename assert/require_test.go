@@ -102,4 +102,9 @@ func TestNew(t *testing.T) {
 	a.Error(errors.New("some error"))
 
 	a.NoError(nil)
+
+	a.Len("Hello", 5)
+	a.Len([]byte("Hello"), 5)
+	a.Len([]int{1, 2, 3}, 3)
+	a.Len(map[byte]byte{1: 1}, 1)
 }

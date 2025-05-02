@@ -66,7 +66,7 @@ func tokenize(recordType reflect.Type, tokenType TokenType) string {
 // a slice struct (struct ptr works too).
 type inserter struct {
 	Table string
-	Data  interface{}
+	Data  any
 }
 
 // Columns returns the comma-separated list of column names-as-tokens for the SQL INSERT statement.
@@ -123,12 +123,12 @@ func (ins *inserter) SQL() string {
 }
 
 // Args returns the arguments to be bound in inserter() or the variadic Exec/ExecContext functions in database/sql.
-func (ins *inserter) Args() []interface{} {
+func (ins *inserter) Args() []any {
 	var (
 		data    reflect.Value
 		rec     reflect.Value
 		recType reflect.Type
-		args    []interface{}
+		args    []any
 	)
 	data = reflect.ValueOf(ins.Data)
 	if data.Kind() == reflect.Slice { // Multi row INSERT: inserter.Data is a slice-of-struct-pointer or slice-of-struct
@@ -141,8 +141,8 @@ func (ins *inserter) Args() []interface{} {
 		numRecs := data.Len()
 		numFieldsPerRec := recType.NumField()
 		numBindArgs := numRecs * numFieldsPerRec
-		args = make([]interface{}, numBindArgs)
-		for rowIndex := 0; rowIndex < data.Len(); rowIndex++ {
+		args = make([]any, numBindArgs)
+		for rowIndex := range data.Len() {
 			if data.Index(0).Kind() == reflect.Pointer {
 				rec = data.Index(rowIndex).Elem() // Cur slice elem is struct pointer, get arg val from ref-element
 			} else {
@@ -162,7 +162,7 @@ func (ins *inserter) Args() []interface{} {
 			recType = data.Type()
 			rec = data
 		}
-		args = make([]interface{}, recType.NumField())
+		args = make([]any, recType.NumField())
 		for i := 0; i < recType.NumField(); i++ {
 			args[i] = rec.Field(i).Interface()
 		}

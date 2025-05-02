@@ -1,6 +1,7 @@
 package assert
 
 import (
+	"fmt"
 	"reflect"
 	"runtime/debug"
 	"strings"
@@ -265,6 +266,35 @@ func Error(t TestingT, err error) {
 func NoError(t TestingT, err error) {
 	if err != nil {
 		t.Errorf(oneParameter, file(), "NoError", err)
+		t.FailNow()
+	}
+}
+
+// getLen tries to get the length of an object.
+// It returns (0, false) if impossible.
+func getLen(x interface{}) (length int, ok bool) {
+	v := reflect.ValueOf(x)
+	defer func() {
+		ok = recover() == nil
+	}()
+	return v.Len(), true
+}
+
+// Len asserts that the specified object has specific length.
+// Len also fails if the object has a type that len() not accept.
+//
+//	assert.Len(t, mySlice, 3)
+func Len[T ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](t TestingT, object any, length T) {
+	l, ok := getLen(object)
+	if !ok {
+		t.Errorf(oneParameter, file(), "Len", fmt.Errorf("\"%v\" could not be applied builtin len()", object))
+		t.FailNow()
+		return
+	}
+
+	if l != int(length) {
+		t.Errorf(oneParameter, file(), "Len", fmt.Errorf("\"%v\" should have %d item(s), but has %d", object, length, l))
 		t.FailNow()
 	}
 }

@@ -166,3 +166,14 @@ func (a *Assertions) True(value bool) {
 	}
 	True(a.t, value)
 }
+
+// Len asserts that the specified object has specific length.
+// Len also fails if the object has a type that len() not accept.
+//
+//	a.Len(t, mySlice, 3)
+func (a *Assertions) Len(object any, length int) {
+	if h, ok := a.t.(tHelper); ok {
+		h.Helper()
+	}
+	Len(a.t, object, length)
+}

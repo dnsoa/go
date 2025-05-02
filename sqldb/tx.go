@@ -75,6 +75,6 @@ func (tx *Tx) PrepareContext(ctx context.Context, query string) (*sql.Stmt, erro
 	return tx.Tx.PrepareContext(ctx, query)
 }
 
-func (tx *Tx) QueryScan(dest any, query string, args ...interface{}) error {
+func (tx *Tx) QueryScan(dest any, query string, args ...any) error {
 	return Scan(tx, dest, query, args...)
 }

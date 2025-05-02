@@ -8,16 +8,16 @@ import (
 
 	"test/models"
 
+	"github.com/dnsoa/go/assert"
 	"github.com/dnsoa/go/sqldb"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/stretchr/testify/require"
 )
 
 func testInsert(t *testing.T, db *sqldb.DB) {
-	r := require.New(t)
+	r := assert.New(t)
 	_, err := db.Exec("DROP TABLE IF EXISTS test1")
 	r.NoError(err)
 	_, err = db.Exec("CREATE TABLE test1 (name TEXT, id INTEGER)")
@@ -68,7 +68,7 @@ func testInsert(t *testing.T, db *sqldb.DB) {
 }
 
 func testUpdate(t *testing.T, db *sqldb.DB) {
-	r := require.New(t)
+	r := assert.New(t)
 	updateData := map[string]any{
 		"age": 55,
 	}
@@ -91,7 +91,7 @@ func testUpdate(t *testing.T, db *sqldb.DB) {
 }
 
 func testSelect(t *testing.T, db *sqldb.DB) {
-	r := require.New(t)
+	r := assert.New(t)
 	t.Run("Scan slice model", func(t *testing.T) {
 		var models []models.Users
 		err := db.QueryScan(&models, "SELECT * FROM users order by age desc")
@@ -126,7 +126,7 @@ func testSelect(t *testing.T, db *sqldb.DB) {
 }
 
 func testQuery(t *testing.T, db *sqldb.DB) {
-	r := require.New(t)
+	r := assert.New(t)
 	rows, err := db.Query("SELECT * FROM users where name = ?", "foo")
 	r.NoError(err)
 	defer rows.Close()
@@ -140,7 +140,7 @@ func testQuery(t *testing.T, db *sqldb.DB) {
 }
 
 func testQueryContext(t *testing.T, db *sqldb.DB, ctx context.Context) {
-	r := require.New(t)
+	r := assert.New(t)
 	rows, err := db.QueryContext(ctx, "SELECT * FROM users where name = ?", "foo")
 	r.NoError(err)
 	defer rows.Close()
@@ -154,7 +154,7 @@ func testQueryContext(t *testing.T, db *sqldb.DB, ctx context.Context) {
 }
 
 func testQueryRow(t *testing.T, db *sqldb.DB) {
-	r := require.New(t)
+	r := assert.New(t)
 	row := db.QueryRow("SELECT * FROM users where name = ?", "foo")
 	var name string
 	var age int
@@ -164,7 +164,7 @@ func testQueryRow(t *testing.T, db *sqldb.DB) {
 	r.Equal(10, age)
 }
 func testQueryRowContext(t *testing.T, db *sqldb.DB, ctx context.Context) {
-	r := require.New(t)
+	r := assert.New(t)
 	row := db.QueryRowContext(ctx, "SELECT * FROM users where name = ?", "foo")
 	var name string
 	var age int
@@ -175,7 +175,7 @@ func testQueryRowContext(t *testing.T, db *sqldb.DB, ctx context.Context) {
 }
 
 func testExec(t *testing.T, db *sqldb.DB) {
-	r := require.New(t)
+	r := assert.New(t)
 	res, err := db.Exec("INSERT INTO users (name, age) VALUES (?, ?)", "luci", 25)
 	r.NoError(err)
 	affected, err := res.RowsAffected()
@@ -184,7 +184,7 @@ func testExec(t *testing.T, db *sqldb.DB) {
 }
 
 func testExecContext(t *testing.T, db *sqldb.DB, ctx context.Context) {
-	r := require.New(t)
+	r := assert.New(t)
 	res, err := db.ExecContext(ctx, "DELETE FROM users where name = ?", "luci")
 	r.NoError(err)
 	affected, err := res.RowsAffected()
@@ -193,7 +193,7 @@ func testExecContext(t *testing.T, db *sqldb.DB, ctx context.Context) {
 }
 
 func testGet(t *testing.T, db *sqldb.DB) {
-	r := require.New(t)
+	r := assert.New(t)
 	var age int
 	err := sqldb.Scan(db, &age, "SELECT age FROM users where name = ?", "foo")
 	r.NoError(err)
@@ -210,7 +210,7 @@ func testGet(t *testing.T, db *sqldb.DB) {
 }
 
 func TestPage(t *testing.T) {
-	r := require.New(t)
+	r := assert.New(t)
 	db, err := sqldb.Open("sqlite3", ":memory:", sqldb.WithDebug(true))
 	r.NoError(err)
 	_, err = db.Exec("CREATE TABLE users (name TEXT, age INTEGER)")
@@ -253,7 +253,7 @@ func TestPage(t *testing.T) {
 }
 
 func TestDB(t *testing.T) {
-	r := require.New(t)
+	r := assert.New(t)
 	ctx := context.Background()
 	opts := []sqldb.Option{
 		sqldb.WithTraceSQL(true),
@@ -395,45 +395,35 @@ func TestDB(t *testing.T) {
 }
 
 func BenchmarkInsert(b *testing.B) {
+	r := assert.New(b)
 	exec := func(db *sqldb.DB, b *testing.B) {
+		defer db.Close()
 		_, err := db.Exec("DROP TABLE IF EXISTS users")
-		if err != nil {
-			b.Fatal(err)
-		}
+		r.NoError(err)
 		_, err = db.Exec("CREATE TABLE users (name TEXT, age INTEGER)")
-		if err != nil {
-			b.Fatal(err)
-		}
+		r.NoError(err)
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err = db.Table("users").Insert(map[string]any{
 				"name": "foo",
 				"age":  20,
 			})
-			if err != nil {
-				b.Fatal(err)
-			}
+			r.NoError(err)
 		}
 	}
 	b.Run("sqlite3", func(b *testing.B) {
 		db, err := sqldb.Open("sqlite3", ":memory:")
-		if err != nil {
-			b.Fatal(err)
-		}
+		r.NoError(err)
 		exec(db, b)
 	})
 	b.Run("postgres", func(b *testing.B) {
 		db, err := sqldb.Open("pgx", "user=postgres password=admin host=localhost port=5432 dbname=postgres sslmode=disable")
-		if err != nil {
-			b.Fatal(err)
-		}
+		r.NoError(err)
 		exec(db, b)
 	})
 	b.Run("mysql", func(b *testing.B) {
 		db, err := sqldb.Open("mysql", "root:admin@tcp(127.0.0.1:3306)/test")
-		if err != nil {
-			b.Fatal(err)
-		}
+		r.NoError(err)
 		exec(db, b)
 	})
 }

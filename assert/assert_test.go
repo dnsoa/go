@@ -17,7 +17,7 @@ func (t *noop) Errorf(format string, args ...any) {}
 func (t *noop) FailNow() {}
 
 // fail creates a new test that is expected to fail.
-func fail(t *testing.T) *noop {
+func fail(_ *testing.T) *noop {
 	return &noop{}
 }
 
@@ -166,4 +166,14 @@ func TestError(t *testing.T) {
 func TestNoError(t *testing.T) {
 	assert.NoError(t, nil)
 	assert.NoError(fail(t), errors.New("some error"))
+}
+
+func TestLen(t *testing.T) {
+	assert.Len(t, "Hello", 5)
+	assert.Len(t, []byte("Hello"), 5)
+	assert.Len(t, []int{1, 2, 3}, 3)
+	assert.Len(t, map[byte]byte{1: 1}, 1)
+	assert.Len(fail(t), &T{}, 4)
+	assert.Len(fail(t), "Hello", 1)
+
 }
