@@ -20,7 +20,7 @@ jobs:
           for mod in $(find . -name 'go.mod' -not -path './.git/*'); do
             dir=$(dirname "$mod")
             echo "Testing $dir"
-            go test -race -coverprofile="$dir/coverage.txt" -covermode=atomic "$dir/..."
+            go test -race -coverprofile="$dir/coverage.txt" -covermode=atomic "github.com/dnsoa/go/$dir/..."
           done
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3

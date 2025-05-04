@@ -38,7 +38,7 @@ func TestAlloc(t *testing.T) {
 	if alloc.CurrentBytes() != DefaultMaxSize*10 {
 		t.Fatal("CurrentBytes() misbehavior")
 	}
-	alloc.StartAutoClean(time.Second)
+	alloc.StartAutoClean(time.Millisecond * 200)
 	defer alloc.StopAutoClean()
 	time.Sleep(1 * time.Second)
 	if alloc.CurrentBytes() != 0 {
