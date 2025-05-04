@@ -27,12 +27,15 @@ func TestEqual(t *testing.T) {
 	assert.Equal(t, 0, 0)
 	assert.Equal(t, "Hello", "Hello")
 	assert.Equal(t, T{A: 10}, T{A: 10})
+	a := &T{A: 10}
+	b := &T{A: 10}
+	assert.Equal(t, a, b)
 }
 
 func TestNotEqual(t *testing.T) {
 	assert.NotEqual(t, 0, 1)
 	assert.NotEqual(t, "Hello", "World")
-	assert.NotEqual(t, &T{A: 10}, &T{A: 10})
+	assert.NotEqual(t, &T{A: 30}, &T{A: 10})
 	assert.NotEqual(t, T{A: 10}, T{A: 20})
 }
 
@@ -61,7 +64,7 @@ func TestContains(t *testing.T) {
 	assert.Contains(t, "Hello", "Hello")
 	assert.Contains(t, []string{"Hello", "World"}, "Hello")
 	assert.Contains(t, []int{1, 2, 3}, 2)
-	assert.Contains(t, []int{1, 2, 3}, []int{})
+	assert.Contains(t, []int{1, 2, 3}, []int{3})
 	assert.Contains(t, []int{1, 2, 3}, []int{1, 2})
 	assert.Contains(t, []byte{'H', 'e', 'l', 'l', 'o'}, byte('e'))
 	assert.Contains(t, []byte{'H', 'e', 'l', 'l', 'o'}, []byte{'e', 'l'})
@@ -108,7 +111,7 @@ func TestNil(t *testing.T) {
 }
 
 func TestNotNil(t *testing.T) {
-	assert.NotNil(t, 0)
+	assert.NotNil(t, 1)
 	assert.NotNil(t, "Hello")
 	assert.NotNil(t, T{})
 	assert.NotNil(t, &T{})

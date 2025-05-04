@@ -47,7 +47,7 @@ func SetLanguage(tag language.Tag) {
 	altLocalizer.Store(trampoline)
 }
 
-func GetText(key message.Reference, a ...interface{}) string {
+func GetText(key message.Reference, a ...any) string {
 	if f := altLocalizer.Load(); f != nil {
 		return f.printer.Sprintf(key, a...)
 	}

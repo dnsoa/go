@@ -1,10 +1,14 @@
 package assert
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"reflect"
-	"runtime/debug"
+	"runtime"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // TestingT is the interface used for tests.
@@ -14,52 +18,71 @@ type TestingT interface {
 }
 
 // Equal asserts that the two parameters are equal.
-func Equal[T comparable](t TestingT, a T, b T) {
-	if a == b {
+func Equal[T comparable](t TestingT, expected T, actual T, msgAndArgs ...any) {
+	if objectsAreEqual(expected, actual) {
 		return
 	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
 
-	t.Errorf(twoParameters, file(), "Equal", a, b)
+	Fail(t, fmt.Sprintf("Not equal: \n"+
+		"expected: %v\n"+
+		"actual  : %v", expected, actual), msgAndArgs...)
 	t.FailNow()
 }
 
 // NotEqual asserts that the two parameters are not equal.
-func NotEqual[T comparable](t TestingT, a T, b T) {
-	if a != b {
+func NotEqual[T comparable](t TestingT, expected T, actual T, msgAndArgs ...any) {
+	if !objectsAreEqual(expected, actual) {
 		return
 	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
 
-	t.Errorf(twoParameters, file(), "NotEqual", a, b)
+	Fail(t, fmt.Sprintf("Should not be: %#v\n", actual), msgAndArgs...)
 	t.FailNow()
 }
 
 // DeepEqual asserts that the two parameters are deeply equal.
-func DeepEqual[T any](t TestingT, a T, b T) {
-	if reflect.DeepEqual(a, b) {
+func DeepEqual[T any](t TestingT, expected T, actual T, msgAndArgs ...any) {
+	if reflect.DeepEqual(actual, expected) {
 		return
 	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
 
-	t.Errorf(twoParameters, file(), "DeepEqual", a, b)
+	Fail(t, fmt.Sprintf("Not deep equal: \n"+
+		"expected: %#v\n"+
+		"actual  : %#v", expected, actual), msgAndArgs...)
 	t.FailNow()
 }
 
 // Contains asserts that a contains b.
-func Contains(t TestingT, a any, b any) {
+func Contains(t TestingT, a any, b any, msgAndArgs ...any) {
 	if contains(a, b) {
 		return
 	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
 
-	t.Errorf(twoParameters, file(), "Contains", a, b)
+	Fail(t, fmt.Sprintf("%#v does not contain %#v", a, b), msgAndArgs...)
 	t.FailNow()
 }
 
 // NotContains asserts that a doesn't contain b.
-func NotContains(t TestingT, a any, b any) {
+func NotContains(t TestingT, a any, b any, msgAndArgs ...any) {
 	if !contains(a, b) {
 		return
 	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
 
-	t.Errorf(twoParameters, file(), "NotContains", a, b)
+	Fail(t, fmt.Sprintf("%#v should not contain %#v", a, b), msgAndArgs...)
 	t.FailNow()
 }
 
@@ -89,7 +112,7 @@ func contains(container any, element any) bool {
 			elementLength := elementValue.Len()
 
 			if elementLength == 0 {
-				return true
+				return false
 			}
 
 			if elementLength > containerValue.Len() {
@@ -123,56 +146,31 @@ func contains(container any, element any) bool {
 	return false
 }
 
-const oneParameter = `
-  %s
-󰅙  assert.%s
-    󰯬  %v`
-
-const twoParameters = `
-  %s
-󰅙  assert.%s
-    󰯬  %v
-    󰯯  %v`
-
-// file returns the first line containing "_test.go" in the debug stack.
-func file() string {
-	stack := string(debug.Stack())
-	lines := strings.Split(stack, "\n")
-	name := ""
-
-	for _, line := range lines {
-		if strings.Contains(line, "_test.go") {
-			space := strings.LastIndex(line, " ")
-
-			if space != -1 {
-				line = line[:space]
-			}
-
-			name = strings.TrimSpace(line)
-			break
-		}
-	}
-
-	return name
-}
-
 // Nil asserts that the given parameter equals nil.
-func Nil(t TestingT, a any) {
+func Nil(t TestingT, a any, msgAndArgs ...any) {
 	if isNil(a) {
 		return
 	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
 
-	t.Errorf(oneParameter, file(), "Nil", a)
+	Fail(t, fmt.Sprintf("Not nil: \n"+
+		"expected: %v\n"+
+		"actual  : %v", nil, a), msgAndArgs...)
 	t.FailNow()
 }
 
 // NotNil asserts that the given parameter does not equal nil.
-func NotNil(t TestingT, a any) {
+func NotNil(t TestingT, a any, msgAndArgs ...any) {
 	if !isNil(a) {
 		return
 	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
 
-	t.Errorf(oneParameter, file(), "NotNil", a)
+	Fail(t, "Should not be nil", msgAndArgs...)
 	t.FailNow()
 }
 
@@ -193,22 +191,40 @@ func isNil(object any) bool {
 }
 
 // True asserts that the given parameter is true.
-func True(t TestingT, a bool) {
-	Equal(t, a, true)
+func True(t TestingT, actual bool, msgAndArgs ...any) {
+	if actual {
+		return
+	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
+
+	Fail(t, "Should be true", msgAndArgs...)
+	t.FailNow()
 }
 
 // False asserts that the given parameter is false.
-func False(t TestingT, a bool) {
-	Equal(t, a, false)
+func False(t TestingT, actual bool, msgAndArgs ...any) {
+	if !actual {
+		return
+	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
+	Fail(t, "Should be false", msgAndArgs...)
+	t.FailNow()
 }
 
 // Empty asserts that the given parameter is empty.
-func Empty(t TestingT, a any) {
+func Empty(t TestingT, a any, msgAndArgs ...any) {
 	if isEmpty(a) {
 		return
 	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
 
-	t.Errorf(oneParameter, file(), "Empty", a)
+	Fail(t, fmt.Sprintf("Should be empty, but was %v", a), msgAndArgs...)
 	t.FailNow()
 }
 
@@ -243,36 +259,46 @@ func isEmpty(object any) bool {
 
 // NotEmpty asserts that the specified object is not empty.  I.e. not nil, "", false, 0 or
 // either a slice or a channel with len == 0.
-func NotEmpty(t TestingT, a any) {
-	if !isEmpty(a) {
+func NotEmpty(t TestingT, object any, msgAndArgs ...any) {
+	if !isEmpty(object) {
 		return
 	}
-	t.Errorf(oneParameter, file(), "NotEmpty", a)
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
+
+	Fail(t, fmt.Sprintf("Should NOT be empty, but was %v", object), msgAndArgs...)
 	t.FailNow()
 
 }
 
 // Error asserts that the given error is not nil.
-func Error(t TestingT, err error) {
+func Error(t TestingT, err error, msgAndArgs ...any) {
 	if err != nil {
 		return
 	}
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
 
-	t.Errorf(oneParameter, file(), "Error", err)
+	Fail(t, "An error is expected but got nil.", msgAndArgs...)
 	t.FailNow()
 }
 
 // NoError asserts that the given error is nil.
-func NoError(t TestingT, err error) {
+func NoError(t TestingT, err error, msgAndArgs ...any) {
 	if err != nil {
-		t.Errorf(oneParameter, file(), "NoError", err)
+		if h, ok := t.(tHelper); ok {
+			h.Helper()
+		}
+		Fail(t, fmt.Sprintf("Received unexpected error:\n%+v", err), msgAndArgs...)
 		t.FailNow()
 	}
 }
 
 // getLen tries to get the length of an object.
 // It returns (0, false) if impossible.
-func getLen(x interface{}) (length int, ok bool) {
+func getLen(x any) (length int, ok bool) {
 	v := reflect.ValueOf(x)
 	defer func() {
 		ok = recover() == nil
@@ -285,16 +311,212 @@ func getLen(x interface{}) (length int, ok bool) {
 //
 //	assert.Len(t, mySlice, 3)
 func Len[T ~int | ~int8 | ~int16 | ~int32 | ~int64 |
-	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](t TestingT, object any, length T) {
+	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](t TestingT, object any, length T, msgAndArgs ...any) {
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
+
 	l, ok := getLen(object)
 	if !ok {
-		t.Errorf(oneParameter, file(), "Len", fmt.Errorf("\"%v\" could not be applied builtin len()", object))
+		Fail(t, fmt.Sprintf("\"%v\" could not be applied builtin len()", object), msgAndArgs...)
 		t.FailNow()
 		return
 	}
 
 	if l != int(length) {
-		t.Errorf(oneParameter, file(), "Len", fmt.Errorf("\"%v\" should have %d item(s), but has %d", object, length, l))
+		Fail(t, fmt.Sprintf("Should have %d item(s), but has %d", length, l), msgAndArgs...)
 		t.FailNow()
 	}
+}
+
+// Fail reports a failure through
+func Fail(t TestingT, failureMessage string, msgAndArgs ...any) {
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
+	var content []labeledContent
+	callInfo := CallerInfo()
+	if len(callInfo) > 0 {
+		content = append(content, labeledContent{"Assertion Trace", strings.Join(callInfo, "\n\t\t\t")})
+	}
+	content = append(content, labeledContent{"Error", failureMessage})
+
+	// Add test name if the Go version supports it
+	if n, ok := t.(interface {
+		Name() string
+	}); ok {
+		content = append(content, labeledContent{"Test", n.Name()})
+	}
+
+	message := messageFromMsgAndArgs(msgAndArgs...)
+	if len(message) > 0 {
+		content = append(content, labeledContent{"Messages", message})
+	}
+
+	t.Errorf("\n%s", ""+labeledOutput(content...))
+}
+
+type labeledContent struct {
+	label   string
+	content string
+}
+
+// labeledOutput returns a string consisting of the provided labeledContent. Each labeled output is appended in the following manner:
+//
+//	\t{{label}}:{{align_spaces}}\t{{content}}\n
+//
+// The initial carriage return is required to undo/erase any padding added by testing.T.Errorf. The "\t{{label}}:" is for the label.
+// If a label is shorter than the longest label provided, padding spaces are added to make all the labels match in length. Once this
+// alignment is achieved, "\t{{content}}\n" is added for the output.
+//
+// If the content of the labeledOutput contains line breaks, the subsequent lines are aligned so that they start at the same location as the first line.
+func labeledOutput(content ...labeledContent) string {
+	longestLabel := 0
+	for _, v := range content {
+		if len(v.label) > longestLabel {
+			longestLabel = len(v.label)
+		}
+	}
+	var output string
+	for _, v := range content {
+		output += "\t" + v.label + ":" + strings.Repeat(" ", longestLabel-len(v.label)) + "\t" + indentMessageLines(v.content, longestLabel) + "\n"
+	}
+	return output
+}
+
+func messageFromMsgAndArgs(msgAndArgs ...any) string {
+	if len(msgAndArgs) == 0 || msgAndArgs == nil {
+		return ""
+	}
+	if len(msgAndArgs) == 1 {
+		msg := msgAndArgs[0]
+		if msgAsStr, ok := msg.(string); ok {
+			return msgAsStr
+		}
+		return fmt.Sprintf("%+v", msg)
+	}
+	if len(msgAndArgs) > 1 {
+		return fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
+	}
+	return ""
+}
+
+// Aligns the provided message so that all lines after the first line start at the same location as the first line.
+// Assumes that the first line starts at the correct location (after carriage return, tab, label, spacer and tab).
+// The longestLabelLen parameter specifies the length of the longest label in the output (required because this is the
+// basis on which the alignment occurs).
+func indentMessageLines(message string, longestLabelLen int) string {
+	outBuf := new(bytes.Buffer)
+
+	for i, scanner := 0, bufio.NewScanner(strings.NewReader(message)); scanner.Scan(); i++ {
+		// no need to align first line because it starts at the correct location (after the label)
+		if i != 0 {
+			// append alignLen+1 spaces to align with "{{longestLabel}}:" before adding tab
+			outBuf.WriteString("\n\t" + strings.Repeat(" ", longestLabelLen+1) + "\t")
+		}
+		outBuf.WriteString(scanner.Text())
+	}
+
+	return outBuf.String()
+}
+
+/* CallerInfo is necessary because the assert functions use the testing object
+internally, causing it to print the file:line of the assert method, rather than where
+the problem actually occurred in calling code.*/
+
+// CallerInfo returns an array of strings containing the file and line number
+// of each stack frame leading from the current test to the assert call that
+// failed.
+func CallerInfo() []string {
+
+	var pc uintptr
+	var ok bool
+	var file string
+	var line int
+	var name string
+
+	callers := []string{}
+	for i := 0; ; i++ {
+		pc, file, line, ok = runtime.Caller(i)
+		if !ok {
+			// The breaks below failed to terminate the loop, and we ran off the
+			// end of the call stack.
+			break
+		}
+
+		// This is a huge edge case, but it will panic if this is the case, see #180
+		if file == "<autogenerated>" {
+			break
+		}
+
+		f := runtime.FuncForPC(pc)
+		if f == nil {
+			break
+		}
+		name = f.Name()
+
+		// testing.tRunner is the standard library function that calls
+		// tests. Subtests are called directly by tRunner, without going through
+		// the Test/Benchmark/Example function that contains the t.Run calls, so
+		// with subtests we should break when we hit tRunner, without adding it
+		// to the list of callers.
+		if name == "testing.tRunner" {
+			break
+		}
+
+		parts := strings.Split(file, "/")
+		if len(parts) > 1 {
+			filename := parts[len(parts)-1]
+			dir := parts[len(parts)-2]
+			if (dir != "assert" && dir != "mock" && dir != "require") || filename == "mock_test.go" {
+				callers = append(callers, fmt.Sprintf("%s:%d", file, line))
+			}
+		}
+
+		// Drop the package
+		segments := strings.Split(name, ".")
+		name = segments[len(segments)-1]
+		if isTest(name, "Test") ||
+			isTest(name, "Benchmark") ||
+			isTest(name, "Example") {
+			break
+		}
+	}
+
+	return callers
+}
+
+// Stolen from the `go test` tool.
+// isTest tells whether name looks like a test (or benchmark, according to prefix).
+// It is a Test (say) if there is a character after Test that is not a lower-case letter.
+// We don't want TesticularCancer.
+func isTest(name, prefix string) bool {
+	if !strings.HasPrefix(name, prefix) {
+		return false
+	}
+	if len(name) == len(prefix) { // "Test" is ok
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(name[len(prefix):])
+	return !unicode.IsLower(r)
+}
+
+func objectsAreEqual(expected, actual any) bool {
+	if expected == nil || actual == nil {
+		return expected == actual
+	}
+
+	exp, ok := expected.([]byte)
+	if !ok {
+		return reflect.DeepEqual(expected, actual)
+	}
+
+	act, ok := actual.([]byte)
+	if !ok {
+		return false
+	}
+	if exp == nil || act == nil {
+		return exp == nil && act == nil
+	}
+	return bytes.Equal(exp, act)
 }

@@ -18,7 +18,7 @@ func TestNew(t *testing.T) {
 
 	a.NotEqual(0, 1)
 	a.NotEqual("Hello", "World")
-	a.NotEqual(&T{A: 10}, &T{A: 10})
+	a.NotEqual(&T{A: 10}, &T{A: 16})
 	a.NotEqual(T{A: 10}, T{A: 20})
 
 	a.DeepEqual(0, 0)
@@ -35,7 +35,7 @@ func TestNew(t *testing.T) {
 	a.Contains("Hello", "Hello")
 	a.Contains([]string{"Hello", "World"}, "Hello")
 	a.Contains([]int{1, 2, 3}, 2)
-	a.Contains([]int{1, 2, 3}, []int{})
+	a.Contains([]int{1, 2, 3}, []int{3})
 	a.Contains([]int{1, 2, 3}, []int{1, 2})
 	a.Contains([]byte{'H', 'e', 'l', 'l', 'o'}, byte('e'))
 	a.Contains([]byte{'H', 'e', 'l', 'l', 'o'}, []byte{'e', 'l'})
