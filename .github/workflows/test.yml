@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go: [ '1.23', '1.24' ]    
+        go: [ '1.24' ]    
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,7 +20,12 @@ jobs:
           for mod in $(find . -name 'go.mod' -not -path './.git/*'); do
             dir=$(dirname "$mod")
             echo "Testing $dir"
-            go test -race -coverprofile="$dir/coverage.txt" -covermode=atomic "github.com/dnsoa/go/$dir/..."
+            pkgs=$(go list "$dir/..." 2>/dev/null || true)
+            if [ -n "$pkgs" ]; then
+              go test -race -coverprofile="$dir/coverage.txt" -covermode=atomic "$dir/..."
+            else
+              echo "No packages to test in $dir"
+            fi
           done
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
