@@ -20,12 +20,7 @@ jobs:
           for mod in $(find . -name 'go.mod' -not -path './.git/*'); do
             dir=$(dirname "$mod")
             echo "Testing $dir"
-            pkgs=$(go list "$dir/..." 2>/dev/null || true)
-            if [ -n "$pkgs" ]; then
-              (cd "$dir" && go test -race -coverprofile="coverage.txt" -covermode=atomic "./...")
-            else
-              echo "No packages to test in $dir"
-            fi
+            (cd "$dir" && go test -race -coverprofile="coverage.txt" -covermode=atomic "./...")
           done
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
