@@ -306,6 +306,7 @@ func TestDB(t *testing.T) {
 		db, err := sqldb.Open("mysql", "root:admin@tcp(127.0.0.1:3306)/test")
 		if err != nil {
 			t.Skip("MySQL database not available, skipping test")
+			return
 		}
 		_, err = db.Exec("DROP TABLE IF EXISTS users")
 		r.NoError(err)
@@ -353,6 +354,7 @@ func TestDB(t *testing.T) {
 		db, err := sqldb.Open("pgx", "user=postgres host=localhost port=5432 password=admin dbname=postgres sslmode=disable")
 		if err != nil {
 			t.Skip("PostgreSQL database not available, skipping test")
+			return
 		}
 		_, err = db.Exec("DROP TABLE IF EXISTS users")
 		r.NoError(err)
@@ -424,6 +426,7 @@ func BenchmarkInsert(b *testing.B) {
 		db, err := sqldb.Open("pgx", "user=postgres password=admin host=localhost port=5432 dbname=postgres sslmode=disable")
 		if err != nil {
 			b.Skip("PostgreSQL database not available, skipping test")
+			return
 		}
 		exec(db, b)
 	})
@@ -431,6 +434,7 @@ func BenchmarkInsert(b *testing.B) {
 		db, err := sqldb.Open("mysql", "root:admin@tcp(127.0.0.1:3306)/test")
 		if err != nil {
 			b.Skip("MySQL database not available, skipping test")
+			return
 		}
 		exec(db, b)
 	})
