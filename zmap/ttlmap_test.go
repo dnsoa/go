@@ -1,4 +1,4 @@
-package maps
+package zmap
 
 import (
 	"testing"
@@ -9,7 +9,7 @@ func TestTtlMap(t *testing.T) {
 	m := NewTtlMap(WithTTL[int, string](1*time.Second), WithCleanupInterval[int, string](time.Second))
 	m.Set(1, "one")
 	v, ok := m.Get(1)
-	if !ok || v != "o5ne" {
+	if !ok || v != "one" {
 		t.Errorf("expected value to be 'one', got %s", v)
 	}
 	if m.Length() != 1 {

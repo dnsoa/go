@@ -1,4 +1,4 @@
-package maps
+package zmap
 
 import "time"
 

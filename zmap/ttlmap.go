@@ -1,8 +1,12 @@
-package maps
+package zmap
 
 import (
 	"runtime"
 	"time"
+)
+
+const (
+	defaultTTL = 15 * time.Minute
 )
 
 type ttlValue[V any] struct {
@@ -40,7 +44,7 @@ func WithCleanupInterval[K comparable, V any](interval time.Duration) TtlMapOpti
 func NewTtlMap[K comparable, V any](options ...TtlMapOption[K, V]) *TtlMap[K, V] {
 	m := &TtlMap[K, V]{
 		hashMap:         NewHashMap[K, ttlValue[V]](),
-		defaultTTL:      60,
+		defaultTTL:      defaultTTL,
 		nowFn:           time.Now,
 		cleanupInterval: time.Minute,
 	}
@@ -77,14 +81,7 @@ func (m *TtlMap[K, V]) Delete(k K) {
 }
 
 func (m *TtlMap[K, V]) Length() int {
-	total := 0
-	for i := range m.hashMap.shards {
-		shard := &m.hashMap.shards[i]
-		shard.lock.RLock()
-		total += len(shard.items)
-		shard.lock.RUnlock()
-	}
-	return total
+	return m.hashMap.Length()
 }
 
 func (m *TtlMap[K, V]) DeleteExpired() {
