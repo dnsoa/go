@@ -23,7 +23,9 @@ jobs:
             (cd "$dir" && go test -race -coverprofile="coverage.txt" -covermode=atomic "./...")
           done
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: dnsoa/go     
           fail_ci_if_error: false # optional (default = false)
           # files: ./i18n/coverage.txt",./assert/coverage.txt" # optiona
