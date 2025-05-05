@@ -9,54 +9,54 @@ import (
 
 type ShardMap[K comparable, V any] struct {
 	items map[K]V
-	lock  sync.RWMutex
+	mu    sync.RWMutex
 }
 
 func NewShardMap[K comparable, V any]() ShardMap[K, V] {
 	return ShardMap[K, V]{
-		lock:  sync.RWMutex{},
+		mu:    sync.RWMutex{},
 		items: make(map[K]V),
 	}
 }
 
 func (s *ShardMap[K, V]) Get(key K) (value V, ok bool) {
-	s.lock.RLock()
+	s.mu.RLock()
 	value, ok = s.items[key]
-	s.lock.RUnlock()
+	s.mu.RUnlock()
 	return
 }
 
 func (s *ShardMap[K, V]) Set(key K, value V) {
-	s.lock.Lock()
+	s.mu.Lock()
 	s.items[key] = value
-	s.lock.Unlock()
+	s.mu.Unlock()
 }
 
 func (s *ShardMap[K, V]) Delete(key K) {
-	s.lock.Lock()
+	s.mu.Lock()
 	delete(s.items, key)
-	s.lock.Unlock()
+	s.mu.Unlock()
 }
 
-func (s *ShardMap[K, V]) Length() int {
-	s.lock.RLock()
+func (s *ShardMap[K, V]) Len() int {
+	s.mu.RLock()
 	total := len(s.items)
-	s.lock.RUnlock()
+	s.mu.RUnlock()
 	return total
 }
 
 func (s *ShardMap[K, V]) Clear() {
-	s.lock.Lock()
+	s.mu.Lock()
 	s.items = make(map[K]V)
-	s.lock.Unlock()
+	s.mu.Unlock()
 }
 
 func (s *ShardMap[K, V]) All() iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {
-		s.lock.RLock()
+		s.mu.RLock()
 		localItems := make(map[K]V, len(s.items))
 		maps.Copy(localItems, s.items)
-		s.lock.RUnlock()
+		s.mu.RUnlock()
 
 		for k, v := range localItems {
 			if !yield(k, v) {

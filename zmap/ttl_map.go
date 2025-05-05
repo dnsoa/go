@@ -80,8 +80,8 @@ func (m *TtlMap[K, V]) Delete(k K) {
 	m.hashMap.Delete(k)
 }
 
-func (m *TtlMap[K, V]) Length() int {
-	return m.hashMap.Length()
+func (m *TtlMap[K, V]) Len() int {
+	return m.hashMap.Len()
 }
 
 func (m *TtlMap[K, V]) DeleteExpired() {
@@ -90,20 +90,20 @@ func (m *TtlMap[K, V]) DeleteExpired() {
 		shard := &m.hashMap.shards[i]
 		expiredKeys := []K{}
 
-		shard.lock.RLock()
+		shard.mu.RLock()
 		for k, v := range shard.items {
 			if v.exp.Before(currentTime) {
 				expiredKeys = append(expiredKeys, k)
 			}
 		}
-		shard.lock.RUnlock()
+		shard.mu.RUnlock()
 
 		if len(expiredKeys) > 0 {
-			shard.lock.Lock()
+			shard.mu.Lock()
 			for _, k := range expiredKeys {
 				delete(shard.items, k)
 			}
-			shard.lock.Unlock()
+			shard.mu.Unlock()
 		}
 	}
 }

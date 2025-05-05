@@ -52,10 +52,10 @@ func (m *HashMap[K, V]) Delete(k K) {
 	m.getShard(k).Delete(k)
 }
 
-func (m *HashMap[K, V]) Length() int {
+func (m *HashMap[K, V]) Len() int {
 	total := 0
 	for i := range m.shards {
-		total += m.shards[i].Length()
+		total += m.shards[i].Len()
 	}
 	return total
 }

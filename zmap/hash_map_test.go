@@ -12,22 +12,22 @@ func TestHashMap(t *testing.T) {
 	if !ok || v != "one" {
 		t.Errorf("expected value to be 'one', got %s", v)
 	}
-	if m.Length() != 1 {
-		t.Errorf("expected length to be 1, got %d", m.Length())
+	if m.Len() != 1 {
+		t.Errorf("expected length to be 1, got %d", m.Len())
 	}
 	m.Delete(1)
 	_, ok = m.Get(1)
 	if ok {
 		t.Errorf("expected value to be deleted")
 	}
-	if m.Length() != 0 {
-		t.Errorf("expected length to be 0, got %d", m.Length())
+	if m.Len() != 0 {
+		t.Errorf("expected length to be 0, got %d", m.Len())
 	}
 	for i := 0; i < 1000; i++ {
 		m.Set(i, "value")
 	}
-	if m.Length() != 1000 {
-		t.Errorf("expected length to be 1000, got %d", m.Length())
+	if m.Len() != 1000 {
+		t.Errorf("expected length to be 1000, got %d", m.Len())
 	}
 	for k, v := range m.All() {
 		if v != "value" {
@@ -38,8 +38,8 @@ func TestHashMap(t *testing.T) {
 		}
 	}
 	m.Clear()
-	if m.Length() != 0 {
-		t.Errorf("expected length to be 0, got %d", m.Length())
+	if m.Len() != 0 {
+		t.Errorf("expected length to be 0, got %d", m.Len())
 	}
 }
 
@@ -47,14 +47,6 @@ func BenchmarkHashMap(b *testing.B) {
 	m := NewHashMap[int, string]()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		m.Set(i, "value")
-	}
-}
-
-func BenchmarkShardMap(b *testing.B) {
-	m := NewShardMap[int, string]()
-
-	for i := 0; b.Loop(); i++ {
 		m.Set(i, "value")
 	}
 }

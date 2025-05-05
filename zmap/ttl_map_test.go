@@ -12,12 +12,12 @@ func TestTtlMap(t *testing.T) {
 	if !ok || v != "one" {
 		t.Errorf("expected value to be 'one', got %s", v)
 	}
-	if m.Length() != 1 {
-		t.Errorf("expected length to be 1, got %d", m.Length())
+	if m.Len() != 1 {
+		t.Errorf("expected length to be 1, got %d", m.Len())
 	}
 	time.Sleep(time.Second * 2)
-	if m.Length() != 0 {
-		t.Errorf("expected length to be 0, got %d", m.Length())
+	if m.Len() != 0 {
+		t.Errorf("expected length to be 0, got %d", m.Len())
 	}
 	_, ok = m.Get(1)
 	if ok {
