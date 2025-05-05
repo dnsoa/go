@@ -4,6 +4,7 @@ import (
 	"hash/maphash"
 	"math/bits"
 	"sync"
+	"sync/atomic"
 )
 
 // lruEntry 是 LRU 缓存中的节点
@@ -16,24 +17,39 @@ type lruEntry[K comparable, V any] struct {
 
 // LRUShard 是单个 LRU 分片
 type lruShard[K comparable, V any] struct {
-	mu        sync.RWMutex
 	items     map[K]*lruEntry[K, V]
 	head      *lruEntry[K, V] // 最近使用的在头部
 	tail      *lruEntry[K, V] // 最久未使用的在尾部
 	capacity  int             // 当前分片容量
 	size      int             // 当前大小
-	accessCnt uint64          // 访问计数
-	hitCnt    uint64          // 命中计数
+	accessCnt atomic.Uint64   // 访问计数，原子操作
+	hitCnt    atomic.Uint64   // 命中计数，原子操作
+	mu        sync.RWMutex
 }
 
 // LRUShardMap 是一个分片式的 LRU 缓存
 type LRUShardMap[K comparable, V any] struct {
+	entryPool sync.Pool
+	onEvict   func(K, V) // 淘汰回调
 	shards    []lruShard[K, V]
 	shardMask int
 	seed      maphash.Seed
-	entryPool sync.Pool
-	onEvict   func(K, V) // 淘汰回调
-	stopChan  chan struct{}
+}
+
+// HitRate 返回缓存命中率
+func (m *LRUShardMap[K, V]) HitRate() float64 {
+	var totalAccess, totalHits uint64
+
+	for i := range m.shards {
+		shard := &m.shards[i]
+		totalAccess += shard.accessCnt.Load()
+		totalHits += shard.hitCnt.Load()
+	}
+
+	if totalAccess == 0 {
+		return 0
+	}
+	return float64(totalHits) / float64(totalAccess)
 }
 
 // NewLRUShardMap 创建一个新的分片式 LRU 缓存
@@ -68,8 +84,7 @@ func NewLRUShardMap[K comparable, V any](shardCount, capacity int) *LRUShardMap[
 		shards:    shards,
 		shardMask: shardMask,
 		seed:      maphash.MakeSeed(),
-		entryPool: sync.Pool{New: func() interface{} { return new(lruEntry[K, V]) }},
-		stopChan:  make(chan struct{}),
+		entryPool: sync.Pool{New: func() any { return new(lruEntry[K, V]) }},
 	}
 }
 
@@ -80,11 +95,11 @@ func (m *LRUShardMap[K, V]) getShard(key K) *lruShard[K, V] {
 
 func (m *LRUShardMap[K, V]) Get(key K) (V, bool) {
 	shard := m.getShard(key)
+	shard.accessCnt.Add(1)
 	shard.mu.RLock()
 	entry, ok := shard.items[key]
 	if !ok {
 		shard.mu.RUnlock()
-		shard.accessCnt++
 		var zero V
 		return zero, false
 	}
@@ -95,9 +110,27 @@ func (m *LRUShardMap[K, V]) Get(key K) (V, bool) {
 
 	// 获取写锁以更新位置
 	shard.mu.Lock()
+	// 重要：在获取写锁后再次检查entry是否仍然存在于map中
+	// 因为在释放读锁和获取写锁之间，entry可能已被其他协程删除
+	if currentEntry, stillExists := shard.items[key]; stillExists && currentEntry == entry {
+		shard.moveToFront(entry)
+		shard.hitCnt.Add(1)
+		shard.mu.Unlock()
+		return value, true
+	}
+
+	// entry已不存在，重新尝试获取
+	entry, ok = shard.items[key]
+	if !ok {
+		shard.mu.Unlock()
+		var zero V
+		return zero, false
+	}
+
+	// 找到了新的entry
+	value = entry.value
 	shard.moveToFront(entry)
-	shard.accessCnt++
-	shard.hitCnt++
+	shard.hitCnt.Add(1)
 	shard.mu.Unlock()
 
 	return value, true
@@ -116,10 +149,11 @@ func (m *LRUShardMap[K, V]) Set(key K, value V) {
 		return
 	}
 
-	entry := &lruEntry[K, V]{
-		key:   key,
-		value: value,
-	}
+	entry := m.entryPool.Get().(*lruEntry[K, V])
+	entry.key = key
+	entry.value = value
+	entry.prev = nil
+	entry.next = nil
 
 	// 添加到链表头部
 	if shard.head == nil {
@@ -138,12 +172,12 @@ func (m *LRUShardMap[K, V]) Set(key K, value V) {
 	// 如果超出容量，移除最久未使用的条目
 	if shard.size > shard.capacity {
 		oldest := shard.tail
-		shard.removeEntry(oldest)
+		shard.removeEntry(oldest, m)
 	}
 }
 
-// Del 删除键值对，如果键存在返回true，否则返回false
-func (m *LRUShardMap[K, V]) Del(key K) bool {
+// Delete 删除键值对，如果键存在返回true，否则返回false
+func (m *LRUShardMap[K, V]) Delete(key K) bool {
 	shard := m.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
@@ -153,12 +187,25 @@ func (m *LRUShardMap[K, V]) Del(key K) bool {
 		return false
 	}
 
-	shard.removeEntry(entry)
+	shard.removeEntry(entry, m)
 	return true
 }
 
 // 移动条目到链表头部
 func (s *lruShard[K, V]) moveToFront(entry *lruEntry[K, V]) {
+	// 安全检查：确保入参和头节点不为nil
+	if entry == nil || s.head == nil {
+		// 如果头为空但entry不为空，直接设为头尾节点
+		if entry != nil && s.head == nil {
+			s.head = entry
+			s.tail = entry
+			entry.prev = nil
+			entry.next = nil
+		}
+		return
+	}
+
+	// 如果已经是头节点，不需要移动
 	if entry == s.head {
 		return
 	}
@@ -182,7 +229,7 @@ func (s *lruShard[K, V]) moveToFront(entry *lruEntry[K, V]) {
 }
 
 // 从链表和映射中移除条目
-func (s *lruShard[K, V]) removeEntry(entry *lruEntry[K, V]) {
+func (s *lruShard[K, V]) removeEntry(entry *lruEntry[K, V], m *LRUShardMap[K, V]) {
 	// 从链表中移除
 	if entry.prev != nil {
 		entry.prev.next = entry.next
@@ -196,9 +243,19 @@ func (s *lruShard[K, V]) removeEntry(entry *lruEntry[K, V]) {
 		s.tail = entry.prev
 	}
 
+	if m.onEvict != nil {
+		m.onEvict(entry.key, entry.value)
+	}
+
 	// 从映射中移除
 	delete(s.items, entry.key)
 	s.size--
+
+	// 清理引用，避免内存泄漏
+	var zero V
+	entry.key, entry.value = *new(K), zero
+	entry.prev, entry.next = nil, nil
+	m.entryPool.Put(entry)
 }
 
 // Len 返回当前缓存中的项目数
@@ -233,4 +290,22 @@ func (m *LRUShardMap[K, V]) Contains(key K) bool {
 	_, ok := shard.items[key]
 	shard.mu.RUnlock()
 	return ok
+}
+
+// Stats 返回缓存统计信息,包括命中率和每个分片的负载
+func (m *LRUShardMap[K, V]) Stats() (hitRate float64, shardLoad []float64) {
+	access := uint64(0)
+	hits := uint64(0)
+	shardLoad = make([]float64, len(m.shards))
+	for i := range m.shards {
+		shard := &m.shards[i]
+		access += shard.accessCnt.Load()
+		hits += shard.hitCnt.Load()
+		shardLoad[i] = float64(shard.size) / float64(shard.capacity)
+	}
+	hitRate = 0.0
+	if access > 0 {
+		hitRate = float64(hits) / float64(access)
+	}
+	return
 }

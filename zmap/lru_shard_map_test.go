@@ -36,7 +36,7 @@ func TestLRUShardMapBasic(t *testing.T) {
 	}
 
 	// 测试删除
-	lru.Del("key1")
+	lru.Delete("key1")
 	if v, ok := lru.Get("key1"); ok {
 		t.Errorf("Get after delete: expected (0, false), got (%v, %v)", v, ok)
 	}
@@ -251,7 +251,7 @@ func TestLRUShardMapConcurrent(t *testing.T) {
 				return
 			default:
 				key := i % 1000
-				lru.Del(key)
+				lru.Delete(key)
 				i++
 				time.Sleep(time.Microsecond * 10)
 			}
@@ -318,7 +318,7 @@ func TestLRUShardMapComplex(t *testing.T) {
 		case 1: // 获取
 			lru.Get(key)
 		case 2: // 删除
-			lru.Del(key)
+			lru.Delete(key)
 		}
 	}
 }
@@ -364,7 +364,7 @@ func BenchmarkLRUShardMap_Mixed(b *testing.B) {
 			case 0: // 10% 写入
 				lru.Set(key, key*10)
 			case 1: // 10% 删除
-				lru.Del(key)
+				lru.Delete(key)
 			default: // 80% 读取
 				lru.Get(key)
 			}
