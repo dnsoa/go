@@ -21,7 +21,7 @@ type lruShard[K comparable, V any] struct {
 	head      *lruEntry[K, V] // 最近使用的在头部
 	tail      *lruEntry[K, V] // 最久未使用的在尾部
 	capacity  int             // 当前分片容量
-	size      int             // 当前大小
+	size      atomic.Int32    // 当前大小
 	accessCnt atomic.Uint64   // 访问计数，原子操作
 	hitCnt    atomic.Uint64   // 命中计数，原子操作
 	mu        sync.RWMutex
@@ -104,7 +104,7 @@ func (m *LRUShardMap[K, V]) Get(key K) (V, bool) {
 		return zero, false
 	}
 
-	// 在读锁下只读取值，不修改链表
+	// 在读锁下只读取值
 	value := entry.value
 	shard.mu.RUnlock()
 
@@ -167,10 +167,10 @@ func (m *LRUShardMap[K, V]) Set(key K, value V) {
 
 	// 添加到映射
 	shard.items[key] = entry
-	shard.size++
+	shard.size.Add(1)
 
 	// 如果超出容量，移除最久未使用的条目
-	if shard.size > shard.capacity {
+	if int(shard.size.Load()) > shard.capacity {
 		oldest := shard.tail
 		shard.removeEntry(oldest, m)
 	}
@@ -230,6 +230,9 @@ func (s *lruShard[K, V]) moveToFront(entry *lruEntry[K, V]) {
 
 // 从链表和映射中移除条目
 func (s *lruShard[K, V]) removeEntry(entry *lruEntry[K, V], m *LRUShardMap[K, V]) {
+	if entry == nil || m == nil {
+		return
+	}
 	// 从链表中移除
 	if entry.prev != nil {
 		entry.prev.next = entry.next
@@ -249,7 +252,7 @@ func (s *lruShard[K, V]) removeEntry(entry *lruEntry[K, V], m *LRUShardMap[K, V]
 
 	// 从映射中移除
 	delete(s.items, entry.key)
-	s.size--
+	s.size.Add(-1)
 
 	// 清理引用，避免内存泄漏
 	var zero V
@@ -264,7 +267,7 @@ func (m *LRUShardMap[K, V]) Len() int {
 	for i := range m.shards {
 		shard := &m.shards[i]
 		shard.mu.RLock()
-		total += shard.size
+		total += int(shard.size.Load())
 		shard.mu.RUnlock()
 	}
 	return total
@@ -278,7 +281,7 @@ func (m *LRUShardMap[K, V]) Clear() {
 		shard.items = make(map[K]*lruEntry[K, V])
 		shard.head = nil
 		shard.tail = nil
-		shard.size = 0
+		shard.size.Store(0)
 		shard.mu.Unlock()
 	}
 }
@@ -301,7 +304,7 @@ func (m *LRUShardMap[K, V]) Stats() (hitRate float64, shardLoad []float64) {
 		shard := &m.shards[i]
 		access += shard.accessCnt.Load()
 		hits += shard.hitCnt.Load()
-		shardLoad[i] = float64(shard.size) / float64(shard.capacity)
+		shardLoad[i] = float64(shard.size.Load()) / float64(shard.capacity)
 	}
 	hitRate = 0.0
 	if access > 0 {
