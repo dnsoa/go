@@ -304,7 +304,9 @@ func TestDB(t *testing.T) {
 	})
 	t.Run("mysql", func(t *testing.T) {
 		db, err := sqldb.Open("mysql", "root:admin@tcp(127.0.0.1:3306)/test")
-		r.NoError(err)
+		if err != nil {
+			t.Skip("MySQL database not available, skipping test")
+		}
 		_, err = db.Exec("DROP TABLE IF EXISTS users")
 		r.NoError(err)
 		_, err = db.Exec("CREATE TABLE users (name TEXT, age INTEGER)")
@@ -349,7 +351,9 @@ func TestDB(t *testing.T) {
 	})
 	t.Run("postgres", func(t *testing.T) {
 		db, err := sqldb.Open("pgx", "user=postgres host=localhost port=5432 password=admin dbname=postgres sslmode=disable")
-		r.NoError(err)
+		if err != nil {
+			t.Skip("PostgreSQL database not available, skipping test")
+		}
 		_, err = db.Exec("DROP TABLE IF EXISTS users")
 		r.NoError(err)
 		_, err = db.Exec("CREATE TABLE users (name TEXT, age INTEGER)")
@@ -418,12 +422,16 @@ func BenchmarkInsert(b *testing.B) {
 	})
 	b.Run("postgres", func(b *testing.B) {
 		db, err := sqldb.Open("pgx", "user=postgres password=admin host=localhost port=5432 dbname=postgres sslmode=disable")
-		r.NoError(err)
+		if err != nil {
+			b.Skip("PostgreSQL database not available, skipping test")
+		}
 		exec(db, b)
 	})
 	b.Run("mysql", func(b *testing.B) {
 		db, err := sqldb.Open("mysql", "root:admin@tcp(127.0.0.1:3306)/test")
-		r.NoError(err)
+		if err != nil {
+			b.Skip("MySQL database not available, skipping test")
+		}
 		exec(db, b)
 	})
 }
