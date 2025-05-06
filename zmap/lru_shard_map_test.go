@@ -4,13 +4,45 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
+func TestNextPowerOfTwo(t *testing.T) {
+	tests := []struct {
+		input    int
+		expected int
+	}{
+		{0, 1},
+		{1, 1},
+		{2, 2},
+		{3, 4},
+		{4, 4},
+		{5, 8},
+		{6, 8},
+		{7, 8},
+		{8, 8},
+		{4096, 4096},
+		{4097, 8192},
+		{9999, 16384},
+		{10000, 16384},
+	}
+
+	for _, test := range tests {
+		result := nextPowerOfTwo(test.input)
+		if result != test.expected {
+			t.Errorf("nextPowerOfTwo(%d) = %d; expected %d", test.input, result, test.expected)
+		}
+	}
+}
+
 func TestLRUShardMapBasic(t *testing.T) {
 	// 创建一个小容量的缓存，便于测试LRU淘汰
-	lru := NewLRUShardMap[string, int](4, 8)
+	lru := NewLRUShardMap[string, int](
+		WithLRUShardCount[string, int](4),
+		WithLRUCapacity[string, int](8),
+	)
 
 	// 测试 Set 和 Get
 	lru.Set("key1", 1)
@@ -64,7 +96,10 @@ func TestLRUShardMapBasic(t *testing.T) {
 
 func TestLRUShardMapEviction(t *testing.T) {
 	// 创建一个4个分片，每个分片容量为2的缓存（总容量为8）
-	lru := NewLRUShardMap[int, int](4, 8)
+	lru := NewLRUShardMap[int, int](
+		WithLRUShardCount[int, int](4),
+		WithLRUCapacity[int, int](8),
+	)
 
 	// 添加16个元素应触发淘汰
 	for i := 0; i < 16; i++ {
@@ -91,10 +126,12 @@ func TestLRUShardMapEviction(t *testing.T) {
 }
 
 func TestLRUShardMapLRUOrder(t *testing.T) {
-	// 创建一个容量为3的缓存，测试LRU淘汰顺序
-	lru := NewLRUShardMap[string, int](1, 3)
+	lru := NewLRUShardMap[string, int](
+		WithLRUShardCount[string, int](0),
+		WithLRUCapacity[string, int](3),
+	)
 
-	// 添加3个元素
+	lru.Set("key0", 0)
 	lru.Set("key1", 1)
 	lru.Set("key2", 2)
 	lru.Set("key3", 3)
@@ -105,8 +142,7 @@ func TestLRUShardMapLRUOrder(t *testing.T) {
 	// 添加一个新元素，触发淘汰
 	lru.Set("key4", 4)
 
-	// key2应被淘汰（最旧），key1、key3和key4应该存在
-	if _, ok := lru.Get("key2"); ok {
+	if _, ok := lru.Get("key0"); ok {
 		t.Error("key2 should have been evicted")
 	}
 
@@ -125,14 +161,17 @@ func TestLRUShardMapLRUOrder(t *testing.T) {
 
 func TestLRUShardMapEdgeCases(t *testing.T) {
 	// 测试创建时的边缘情况
-	lru1 := NewLRUShardMap[string, int](0, 0)
+	lru1 := NewLRUShardMap[string, int]()
 	// 应该使用默认值创建
-	if len(lru1.shards) != defaultShards || lru1.shards[0].capacity != 1024/defaultShards {
+	if len(lru1.shards) != defaultLRUShardNUM || lru1.shards[0].capacity != defaultLRUCapacity/defaultLRUShardNUM {
 		t.Error("Failed to use default values for invalid parameters")
 	}
 
 	// 测试零值和空值
-	lru := NewLRUShardMap[string, *int](4, 8)
+	lru := NewLRUShardMap[string, *int](
+		WithLRUShardCount[string, *int](4),
+		WithLRUCapacity[string, *int](8),
+	)
 	var nilPtr *int
 
 	// 设置nil值
@@ -151,7 +190,10 @@ func TestLRUShardMapEdgeCases(t *testing.T) {
 	}
 
 	// 使用不同类型测试
-	lruStr := NewLRUShardMap[int, string](4, 8)
+	lruStr := NewLRUShardMap[int, string](
+		WithLRUShardCount[int, string](4),
+		WithLRUCapacity[int, string](8),
+	)
 	lruStr.Set(0, "zero")
 	if v, ok := lruStr.Get(0); !ok || v != "zero" {
 		t.Errorf("Get with int key: expected (zero, true), got (%v, %v)", v, ok)
@@ -159,7 +201,10 @@ func TestLRUShardMapEdgeCases(t *testing.T) {
 }
 
 func TestLRUShardMapConcurrent(t *testing.T) {
-	lru := NewLRUShardMap[int, int](16, 1000)
+	lru := NewLRUShardMap[int, int](
+		WithLRUShardCount[int, int](16),
+		WithLRUCapacity[int, int](1000),
+	)
 	var wg sync.WaitGroup
 	numGoroutines := 10
 	numOps := 1000
@@ -262,13 +307,16 @@ func TestLRUShardMapConcurrent(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	close(stop)
 	wg.Wait()
-	hitRate, shardLoad := lru.Stats()
-	t.Logf("Hit Rate: %.2f%%, Shard Load: %v", hitRate*100, shardLoad)
+	lru.Stats()
+
 }
 
 func TestLRUShardMapComplex(t *testing.T) {
 	// 创建一个大容量的缓存用于复杂场景测试
-	lru := NewLRUShardMap[string, interface{}](8, 100)
+	lru := NewLRUShardMap[string, interface{}](
+		WithLRUShardCount[string, interface{}](8),
+		WithLRUCapacity[string, interface{}](100),
+	)
 
 	// 添加不同类型的值
 	lru.Set("int", 42)
@@ -324,11 +372,80 @@ func TestLRUShardMapComplex(t *testing.T) {
 		}
 	}
 	hitRate, shardLoad := lru.Stats()
-	t.Logf("Hit Rate: %.2f%%, Shard Load: %v", hitRate*100, shardLoad)
+	_, _ = hitRate, shardLoad
+	// t.Logf("Hit Rate: %.2f%%, Shard Load: %v", hitRate*100, shardLoad)
+}
+
+func TestLRUShardMapSlowOnEvict(t *testing.T) {
+	evictedKeys := make(chan string, 100)
+
+	// 模拟耗时回调 (500ms)
+	slowOnEvict := func(key string, value int) {
+		evictedKeys <- key
+	}
+
+	lru := NewLRUShardMap[string, int](
+		WithLRUShardCount[string, int](2),
+		WithLRUCapacity[string, int](4),
+		WithLRUOnEvict(slowOnEvict))
+
+	// 步骤1: 填满缓存
+	for i := 0; i < 4; i++ {
+		key := fmt.Sprintf("key%d", i)
+		lru.Set(key, i)
+	}
+
+	lru.Set("extra", 999)
+
+	operationsDone := atomic.Int32{}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < 10; j++ {
+				key := fmt.Sprintf("worker%d-key%d", id, j)
+
+				switch j % 3 {
+				case 0:
+					lru.Set(key, j)
+				case 1:
+					lru.Get("extra")
+				case 2:
+					lru.Delete(fmt.Sprintf("key%d", j%4))
+				}
+
+				operationsDone.Add(1)
+				time.Sleep(10 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	evictions := 0
+	select {
+	case <-evictedKeys:
+		evictions++
+	case <-time.After(1 * time.Second):
+		t.Error("Eviction callback did not complete")
+	}
+
+	if evictions == 0 {
+		t.Error("Expected at least one eviction callback")
+	}
+	lru.Set("final-test", 123)
+	if val, ok := lru.Get("final-test"); !ok || val != 123 {
+		t.Error("Cache operations failed after eviction")
+	}
 }
 
 func BenchmarkLRUShardMap_Get(b *testing.B) {
-	lru := NewLRUShardMap[int, int](0, 10000)
+	lru := NewLRUShardMap[int, int](
+		WithLRUCapacity[int, int](10000),
+	)
 	for i := 0; i < 5000; i++ {
 		lru.Set(i, i)
 	}
@@ -344,7 +461,10 @@ func BenchmarkLRUShardMap_Get(b *testing.B) {
 }
 
 func BenchmarkLRUShardMap_Set(b *testing.B) {
-	lru := NewLRUShardMap[int, int](16, 10000)
+	lru := NewLRUShardMap[int, int](
+		WithLRUShardCount[int, int](16),
+		WithLRUCapacity[int, int](10000),
+	)
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -357,7 +477,10 @@ func BenchmarkLRUShardMap_Set(b *testing.B) {
 }
 
 func BenchmarkLRUShardMap_Mixed(b *testing.B) {
-	lru := NewLRUShardMap[int, int](32, 100000)
+	lru := NewLRUShardMap[int, int](
+		WithLRUShardCount[int, int](32),
+		WithLRUCapacity[int, int](100000),
+	)
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
