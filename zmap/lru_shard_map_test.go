@@ -127,7 +127,7 @@ func TestLRUShardMapEdgeCases(t *testing.T) {
 	// 测试创建时的边缘情况
 	lru1 := NewLRUShardMap[string, int](0, 0)
 	// 应该使用默认值创建
-	if len(lru1.shards) != 16 || lru1.shards[0].capacity != 1024/16 {
+	if len(lru1.shards) != defaultShards || lru1.shards[0].capacity != 1024/defaultShards {
 		t.Error("Failed to use default values for invalid parameters")
 	}
 
@@ -262,6 +262,8 @@ func TestLRUShardMapConcurrent(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	close(stop)
 	wg.Wait()
+	hitRate, shardLoad := lru.Stats()
+	t.Logf("Hit Rate: %.2f%%, Shard Load: %v", hitRate*100, shardLoad)
 }
 
 func TestLRUShardMapComplex(t *testing.T) {
@@ -321,10 +323,12 @@ func TestLRUShardMapComplex(t *testing.T) {
 			lru.Delete(key)
 		}
 	}
+	hitRate, shardLoad := lru.Stats()
+	t.Logf("Hit Rate: %.2f%%, Shard Load: %v", hitRate*100, shardLoad)
 }
 
 func BenchmarkLRUShardMap_Get(b *testing.B) {
-	lru := NewLRUShardMap[int, int](16, 10000)
+	lru := NewLRUShardMap[int, int](0, 10000)
 	for i := 0; i < 5000; i++ {
 		lru.Set(i, i)
 	}
@@ -359,7 +363,7 @@ func BenchmarkLRUShardMap_Mixed(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 
 		for pb.Next() {
-			key := rand.IntN(10000)
+			key := rand.IntN(1000000)
 			switch rand.IntN(10) {
 			case 0: // 10% 写入
 				lru.Set(key, key*10)

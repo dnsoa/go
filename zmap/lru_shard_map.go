@@ -3,9 +3,34 @@ package zmap
 import (
 	"hash/maphash"
 	"math/bits"
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
+
+var (
+	defaultShards = runtime.NumCPU() * 4 // 默认分片数
+)
+
+type LRUShardMapOption[K comparable, V any] func(*LRUShardMap[K, V])
+
+func WithLRUShardCount[K comparable, V any](shardCount int) LRUShardMapOption[K, V] {
+	return func(m *LRUShardMap[K, V]) {
+		m.shardCount = nextPowerOfTwo(shardCount)
+	}
+}
+
+func WithLRUCapacity[K comparable, V any](capacity int) LRUShardMapOption[K, V] {
+	return func(m *LRUShardMap[K, V]) {
+		m.capacity = capacity
+	}
+}
+
+func WithLRUOnEvict[K comparable, V any](onEvict func(K, V)) LRUShardMapOption[K, V] {
+	return func(m *LRUShardMap[K, V]) {
+		m.onEvict = onEvict
+	}
+}
 
 // lruEntry 是 LRU 缓存中的节点
 type lruEntry[K comparable, V any] struct {
@@ -29,68 +54,61 @@ type lruShard[K comparable, V any] struct {
 
 // LRUShardMap 是一个分片式的 LRU 缓存
 type LRUShardMap[K comparable, V any] struct {
-	entryPool sync.Pool
-	onEvict   func(K, V) // 淘汰回调
-	shards    []lruShard[K, V]
-	shardMask int
-	seed      maphash.Seed
-}
-
-// HitRate 返回缓存命中率
-func (m *LRUShardMap[K, V]) HitRate() float64 {
-	var totalAccess, totalHits uint64
-
-	for i := range m.shards {
-		shard := &m.shards[i]
-		totalAccess += shard.accessCnt.Load()
-		totalHits += shard.hitCnt.Load()
-	}
-
-	if totalAccess == 0 {
-		return 0
-	}
-	return float64(totalHits) / float64(totalAccess)
+	entryPool  sync.Pool
+	onEvict    func(K, V) // 淘汰回调
+	capacity   int
+	shardCount int
+	shards     []lruShard[K, V]
+	shardMask  int
+	seed       maphash.Seed
 }
 
 // NewLRUShardMap 创建一个新的分片式 LRU 缓存
 // shardCount: 分片数量，默认为16，会向上取整为2的幂
 // capacity: 总容量，会平均分配给所有分片
-func NewLRUShardMap[K comparable, V any](shardCount, capacity int) *LRUShardMap[K, V] {
+func NewLRUShardMap[K comparable, V any](shardCount, capacity int, options ...LRUShardMapOption[K, V]) *LRUShardMap[K, V] {
 	if shardCount <= 0 {
-		shardCount = 16
+		shardCount = defaultShards
 	}
 	if capacity <= 0 {
 		capacity = 1024
 	}
-
+	m := &LRUShardMap[K, V]{
+		shardCount: shardCount,
+		capacity:   capacity,
+		seed:       maphash.MakeSeed(),
+		entryPool:  sync.Pool{New: func() any { return new(lruEntry[K, V]) }},
+	}
+	for _, option := range options {
+		option(m)
+	}
 	// 向上取整为2的幂
-	shardCount = 1 << bits.Len(uint(shardCount-1))
-	shardMask := shardCount - 1
+	m.shardCount = 1 << bits.Len(uint(m.shardCount-1))
+	m.shardMask = m.shardCount - 1
 
-	shards := make([]lruShard[K, V], shardCount)
-	perShardCap := capacity / shardCount
+	m.shards = make([]lruShard[K, V], m.shardCount)
+	perShardCap := capacity / m.shardCount
 	if perShardCap <= 0 {
 		perShardCap = 1
 	}
 
-	for i := range shards {
-		shards[i] = lruShard[K, V]{
+	for i := range m.shards {
+		m.shards[i] = lruShard[K, V]{
 			items:    make(map[K]*lruEntry[K, V]),
 			capacity: perShardCap,
 		}
 	}
 
-	return &LRUShardMap[K, V]{
-		shards:    shards,
-		shardMask: shardMask,
-		seed:      maphash.MakeSeed(),
-		entryPool: sync.Pool{New: func() any { return new(lruEntry[K, V]) }},
-	}
+	return m
 }
 
 func (m *LRUShardMap[K, V]) getShard(key K) *lruShard[K, V] {
-	hash := maphash.Comparable(m.seed, key)
-	return &m.shards[int(hash)&m.shardMask]
+	h := maphash.Comparable(m.seed, key)
+	// 使用murmur哈希的简化版本
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	return &m.shards[(h & uint64(m.shardMask))]
 }
 
 func (m *LRUShardMap[K, V]) Get(key K) (V, bool) {
