@@ -337,7 +337,7 @@ func Fail(t TestingT, failureMessage string, msgAndArgs ...any) {
 	var content []labeledContent
 	callInfo := CallerInfo()
 	if len(callInfo) > 0 {
-		content = append(content, labeledContent{"Assertion Trace", strings.Join(callInfo, "\n\t\t\t")})
+		content = append(content, labeledContent{"Trace", strings.Join(callInfo, "\n\t\t\t")})
 	}
 	content = append(content, labeledContent{"Error", failureMessage})
 
@@ -428,7 +428,6 @@ the problem actually occurred in calling code.*/
 // of each stack frame leading from the current test to the assert call that
 // failed.
 func CallerInfo() []string {
-
 	var pc uintptr
 	var ok bool
 	var file string
@@ -439,8 +438,6 @@ func CallerInfo() []string {
 	for i := 0; ; i++ {
 		pc, file, line, ok = runtime.Caller(i)
 		if !ok {
-			// The breaks below failed to terminate the loop, and we ran off the
-			// end of the call stack.
 			break
 		}
 
@@ -455,22 +452,14 @@ func CallerInfo() []string {
 		}
 		name = f.Name()
 
-		// testing.tRunner is the standard library function that calls
-		// tests. Subtests are called directly by tRunner, without going through
-		// the Test/Benchmark/Example function that contains the t.Run calls, so
-		// with subtests we should break when we hit tRunner, without adding it
-		// to the list of callers.
+		// testing.tRunner is the standard library function that calls tests
 		if name == "testing.tRunner" {
 			break
 		}
 
-		parts := strings.Split(file, "/")
-		if len(parts) > 1 {
-			filename := parts[len(parts)-1]
-			dir := parts[len(parts)-2]
-			if (dir != "assert" && dir != "mock" && dir != "require") || filename == "mock_test.go" {
-				callers = append(callers, fmt.Sprintf("%s:%d", file, line))
-			}
+		// 判断是否应该包含此调用
+		if shouldIncludeCaller(file, name) {
+			callers = append(callers, fmt.Sprintf("%s:%d", file, line))
 		}
 
 		// Drop the package
@@ -484,6 +473,14 @@ func CallerInfo() []string {
 	}
 
 	return callers
+}
+
+func shouldIncludeCaller(file, funcName string) bool {
+	if strings.Contains(funcName, "/assert.") {
+		return strings.HasSuffix(file, "_test.go")
+	}
+
+	return true
 }
 
 // Stolen from the `go test` tool.
