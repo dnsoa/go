@@ -3,6 +3,7 @@ package assert
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -294,6 +295,36 @@ func NoError(t TestingT, err error, msgAndArgs ...any) {
 		Fail(t, fmt.Sprintf("Received unexpected error:\n%+v", err), msgAndArgs...)
 		t.FailNow()
 	}
+}
+
+// NotErrorIs asserts that none of the errors in err's chain matches target.
+// This is a wrapper for errors.Is.
+func ErrorIs(t TestingT, err error, expected error, msgAndArgs ...any) {
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
+
+	if errors.Is(err, expected) {
+		return
+	}
+
+	Fail(t, fmt.Sprintf("Expected error to be %q, but got %q", expected, err), msgAndArgs...)
+	t.FailNow()
+}
+
+// ErrorAs asserts that at least one of the errors in err's chain matches target, and if so, sets target to that error value.
+// This is a wrapper for errors.As.
+func ErrorAs(t TestingT, err error, target any, msgAndArgs ...any) {
+	if h, ok := t.(tHelper); ok {
+		h.Helper()
+	}
+
+	if errors.As(err, target) {
+		return
+	}
+
+	Fail(t, fmt.Sprintf("Expected error to be %q, but got %q", target, err), msgAndArgs...)
+	t.FailNow()
 }
 
 // getLen tries to get the length of an object.

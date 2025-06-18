@@ -13,6 +13,9 @@ type noop struct{}
 // Errorf does nothing.
 func (t *noop) Errorf(format string, args ...any) {}
 
+// Helper does nothing.
+func (t *noop) Helper() {}
+
 // FailNow does nothing.
 func (t *noop) FailNow() {}
 
@@ -129,9 +132,11 @@ func TestFailNotNil(t *testing.T) {
 	assert.NotNil(fail(t), nil)
 }
 
-func TestTrue(t *testing.T) {
+func TestTrueFalse(t *testing.T) {
 	assert.True(t, true)
+	assert.True(fail(t), false)
 	assert.False(t, false)
+	assert.False(fail(t), true)
 }
 
 func TestEmpty(t *testing.T) {
@@ -179,4 +184,20 @@ func TestLen(t *testing.T) {
 	assert.Len(fail(t), &T{}, 4)
 	assert.Len(fail(t), "Hello", 1)
 
+}
+
+func TestErrorIs(t *testing.T) {
+	var err1 = errors.New("some error")
+	var err2 = err1
+	assert.ErrorIs(t, err1, err1)
+	assert.ErrorIs(t, err2, err1)
+	assert.ErrorIs(fail(t), nil, errors.New("some error"))
+}
+
+func TestErrorAs(t *testing.T) {
+	var err1 = errors.New("some error")
+	var err2 = err1
+	assert.ErrorAs(t, err1, &err1, "assert.ErrorAs", "some error")
+	assert.ErrorAs(t, err2, &err1)
+	assert.ErrorAs(fail(t), nil, &err1, "assert.ErrorAs", "some error")
 }
