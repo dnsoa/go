@@ -92,7 +92,7 @@ type Response struct {
 	Header Header
 }
 
-var responsePool = pool.NewPool[Response, *Response](func() *Response {
+var responsePool = pool.NewPool(func() *Response {
 	resp := new(Response)
 	resp.Answer = make([]RR, 0, 8)
 	resp.Extra = make([]RR, 0, 8)
@@ -150,7 +150,7 @@ func (r *Response) Unpack(payload []byte) error {
 	}
 	r.Question = q
 
-	// r.Domain = DecodeDomain(r.Question.Name)
+	r.Domain = DecodeDomain(r.Question.Name)
 
 	var rr RR
 

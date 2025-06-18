@@ -25,7 +25,7 @@ type Request struct {
 	Header   Header
 }
 
-var requestPool = pool.NewPool[Request, *Request](func() *Request {
+var requestPool = pool.NewPool(func() *Request {
 	return new(Request)
 })
 
@@ -153,8 +153,7 @@ func (r *Request) SetQuestion(domain string, typ Type, class Class) {
 	optHdr := r.OPT.Pack()
 	r.Raw = append(r.Raw, optHdr...)
 	for _, o := range r.OPT.Options {
-		r.Raw = append(r.Raw, byte(o.Code>>8), byte(o.Code))
-		r.Raw = append(r.Raw, byte(o.Length>>8), byte(o.Length))
+		r.Raw = append(r.Raw, byte(o.Code>>8), byte(o.Code), byte(o.Length>>8), byte(o.Length))
 		r.Raw = append(r.Raw, o.Data...)
 	}
 }
