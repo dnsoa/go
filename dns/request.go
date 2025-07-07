@@ -26,7 +26,10 @@ type Request struct {
 }
 
 var requestPool = pool.NewPool(func() *Request {
-	return new(Request)
+	req := new(Request)
+	req.Raw = make([]byte, 0, 512)
+	req.OPT.Options = make([]Option, 0, 8)
+	return req
 })
 
 // AcquireRequest returns new dns request.
@@ -135,7 +138,8 @@ func (r *Request) SetQuestion(domain string, typ Type, class Class) {
 	}
 
 	hdr := r.Header.Pack()
-	r.Raw = append(r.Raw[:0], hdr[:]...)
+	r.Raw = r.Raw[:0]
+	r.Raw = append(r.Raw, hdr[:]...)
 	// QNAME
 	r.Raw = EncodeDomain(r.Raw, domain)
 	r.Question.Name = r.Raw[headerSize : headerSize+len(domain)+2]

@@ -39,19 +39,6 @@ func DecodeDomain(domain []byte) []byte {
 		i += j + 1
 	}
 	return dst[:len(dst)-1]
-
-	// var domain string
-	// for i := 0; i < len(data); i++ {
-	// 	if data[i] == 0 {
-	// 		break
-	// 	}
-	// 	if i != 0 {
-	// 		domain += "."
-	// 	}
-	// 	domain += string(data[i+1 : i+1+int(data[i])])
-	// 	i += int(data[i])
-	// }
-	// return domain
 }
 
 const (
