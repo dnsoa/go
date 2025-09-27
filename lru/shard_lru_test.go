@@ -39,9 +39,9 @@ func TestNextPowerOfTwo(t *testing.T) {
 
 func TestLRUShardMapBasic(t *testing.T) {
 	// 创建一个小容量的缓存，便于测试LRU淘汰
-	lru := NewLRUShardMap(
-		WithLRUShardCount[string, int](4),
-		WithLRUCapacity[string, int](8),
+	lru := NewShardLRU(
+		WithShardCount[string, int](4),
+		WithCapacity[string, int](8),
 	)
 
 	// 测试 Set 和 Get
@@ -96,9 +96,9 @@ func TestLRUShardMapBasic(t *testing.T) {
 
 func TestLRUShardMapEviction(t *testing.T) {
 	// 创建一个4个分片，每个分片容量为2的缓存（总容量为8）
-	lru := NewLRUShardMap(
-		WithLRUShardCount[int, int](4),
-		WithLRUCapacity[int, int](8),
+	lru := NewShardLRU(
+		WithShardCount[int, int](4),
+		WithCapacity[int, int](8),
 	)
 
 	// 添加16个元素应触发淘汰
@@ -126,9 +126,9 @@ func TestLRUShardMapEviction(t *testing.T) {
 }
 
 func TestLRUShardMapLRUOrder(t *testing.T) {
-	lru := NewLRUShardMap(
-		WithLRUShardCount[string, int](0),
-		WithLRUCapacity[string, int](3),
+	lru := NewShardLRU(
+		WithShardCount[string, int](0),
+		WithCapacity[string, int](3),
 	)
 
 	lru.Set("key0", 0)
@@ -161,16 +161,16 @@ func TestLRUShardMapLRUOrder(t *testing.T) {
 
 func TestLRUShardMapEdgeCases(t *testing.T) {
 	// 测试创建时的边缘情况
-	lru1 := NewLRUShardMap[string, int]()
+	lru1 := NewShardLRU[string, int]()
 	// 应该使用默认值创建
-	if len(lru1.shards) != defaultLRUShardNUM || lru1.shards[0].capacity != defaultLRUCapacity/defaultLRUShardNUM {
+	if len(lru1.shards) != defaultShardNUM || lru1.shards[0].capacity != defaultCapacity/defaultShardNUM {
 		t.Error("Failed to use default values for invalid parameters")
 	}
 
 	// 测试零值和空值
-	lru := NewLRUShardMap(
-		WithLRUShardCount[string, *int](4),
-		WithLRUCapacity[string, *int](8),
+	lru := NewShardLRU(
+		WithShardCount[string, *int](4),
+		WithCapacity[string, *int](8),
 	)
 	var nilPtr *int
 
@@ -190,9 +190,9 @@ func TestLRUShardMapEdgeCases(t *testing.T) {
 	}
 
 	// 使用不同类型测试
-	lruStr := NewLRUShardMap(
-		WithLRUShardCount[int, string](4),
-		WithLRUCapacity[int, string](8),
+	lruStr := NewShardLRU(
+		WithShardCount[int, string](4),
+		WithCapacity[int, string](8),
 	)
 	lruStr.Set(0, "zero")
 	if v, ok := lruStr.Get(0); !ok || v != "zero" {
@@ -201,9 +201,9 @@ func TestLRUShardMapEdgeCases(t *testing.T) {
 }
 
 func TestLRUShardMapConcurrent(t *testing.T) {
-	lru := NewLRUShardMap(
-		WithLRUShardCount[int, int](16),
-		WithLRUCapacity[int, int](1000),
+	lru := NewShardLRU(
+		WithShardCount[int, int](16),
+		WithCapacity[int, int](1000),
 	)
 	var wg sync.WaitGroup
 	numGoroutines := 10
@@ -313,9 +313,9 @@ func TestLRUShardMapConcurrent(t *testing.T) {
 
 func TestLRUShardMapComplex(t *testing.T) {
 	// 创建一个大容量的缓存用于复杂场景测试
-	lru := NewLRUShardMap(
-		WithLRUShardCount[string, interface{}](8),
-		WithLRUCapacity[string, interface{}](100),
+	lru := NewShardLRU(
+		WithShardCount[string, interface{}](8),
+		WithCapacity[string, interface{}](100),
 	)
 
 	// 添加不同类型的值
@@ -384,9 +384,9 @@ func TestLRUShardMapSlowOnEvict(t *testing.T) {
 		evictedKeys <- key
 	}
 
-	lru := NewLRUShardMap(
-		WithLRUShardCount[string, int](2),
-		WithLRUCapacity[string, int](4),
+	lru := NewShardLRU(
+		WithShardCount[string, int](2),
+		WithCapacity[string, int](4),
 		WithLRUOnEvict(slowOnEvict))
 
 	// 步骤1: 填满缓存
@@ -443,8 +443,8 @@ func TestLRUShardMapSlowOnEvict(t *testing.T) {
 }
 
 func BenchmarkLRUShardMap_Get(b *testing.B) {
-	lru := NewLRUShardMap(
-		WithLRUCapacity[int, int](10000),
+	lru := NewShardLRU(
+		WithCapacity[int, int](10000),
 	)
 	for i := 0; i < 5000; i++ {
 		lru.Set(i, i)
@@ -461,9 +461,9 @@ func BenchmarkLRUShardMap_Get(b *testing.B) {
 }
 
 func BenchmarkLRUShardMap_Set(b *testing.B) {
-	lru := NewLRUShardMap(
-		WithLRUShardCount[int, int](16),
-		WithLRUCapacity[int, int](10000),
+	lru := NewShardLRU(
+		WithShardCount[int, int](16),
+		WithCapacity[int, int](10000),
 	)
 
 	b.ResetTimer()
@@ -477,9 +477,9 @@ func BenchmarkLRUShardMap_Set(b *testing.B) {
 }
 
 func BenchmarkLRUShardMap_Mixed(b *testing.B) {
-	lru := NewLRUShardMap(
-		WithLRUShardCount[int, int](32),
-		WithLRUCapacity[int, int](100000),
+	lru := NewShardLRU(
+		WithShardCount[int, int](32),
+		WithCapacity[int, int](100000),
 	)
 
 	b.ResetTimer()
