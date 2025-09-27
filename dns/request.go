@@ -7,7 +7,7 @@ import (
 	"net"
 	"net/netip"
 
-	"github.com/dnsoa/go/pool"
+	"github.com/dnsoa/go/sync"
 )
 
 // A Name is a non-encoded and non-escaped domain name. It is used instead of strings to avoid
@@ -25,7 +25,7 @@ type Request struct {
 	Header   Header
 }
 
-var requestPool = pool.NewPool(func() *Request {
+var requestPool = sync.NewPool(func() *Request {
 	req := new(Request)
 	req.Raw = make([]byte, 0, 512)
 	req.OPT.Options = make([]Option, 0, 8)

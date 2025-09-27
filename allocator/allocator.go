@@ -19,7 +19,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-package pool
+package allocator
 
 import (
 	"errors"
@@ -35,16 +35,17 @@ const (
 )
 
 type Allocator struct {
-	buffers   []sync.Pool
-	maxBits   byte
-	maxSize   int
-	zeroOnPut bool    // 回收时是否清零
-	objCounts []int64 // 每个池的对象数量
-	cleanStop chan struct{}
-	cleanOnce sync.Once
+	buffers       []sync.Pool
+	maxBits       int
+	maxSize       int
+	zeroOnPut     bool    // 回收时是否清零
+	objCounts     []int64 // 每个池的对象数量
+	cleanStop     chan struct{}
+	cleanOnce     sync.Once
+	cleanStopOnce sync.Once
 }
 
-func NewAllocator(opts ...func(*Allocator)) *Allocator {
+func New(opts ...func(*Allocator)) *Allocator {
 	alloc := &Allocator{
 		maxBits: DefaultMaxBits,
 		maxSize: DefaultMaxSize,
@@ -83,20 +84,20 @@ func WithAutoClean(interval time.Duration) func(*Allocator) {
 // Get 返回一个合适大小的 []byte 指针
 func (alloc *Allocator) Get(size int) *AppendBuffer {
 	if size <= 0 {
-		panic("Size is negative")
+		panic("size must be positive")
 	}
 	if size > alloc.maxSize {
 		b := make(AppendBuffer, size)
 		return &b
 	}
-	bits := bits.Len(uint(size))
-	if size == 1<<(bits-1) {
-		bits--
+	idx := bits.Len(uint(size))
+	if size == 1<<(idx-1) {
+		idx--
 	}
 
-	p := alloc.buffers[bits].Get().(*AppendBuffer)
+	p := alloc.buffers[idx].Get().(*AppendBuffer)
 	*p = (*p)[:size]
-	atomic.AddInt64(&alloc.objCounts[bits], 1)
+	atomic.AddInt64(&alloc.objCounts[idx], 1)
 	return p
 }
 
@@ -119,8 +120,8 @@ func (alloc *Allocator) Put(p *AppendBuffer) error {
 		// 超过最大池管理范围，直接忽略
 		return nil
 	}
-	bits := bits.Len(uint(c)) - 1
-	if c != 1<<bits {
+	idx := bits.Len(uint(c)) - 1
+	if c != 1<<uint(idx) {
 		return errors.New("allocator Put() buffer cap must be 2^n")
 	}
 	if alloc.zeroOnPut {
@@ -128,8 +129,8 @@ func (alloc *Allocator) Put(p *AppendBuffer) error {
 			(*p)[i] = 0
 		}
 	}
-	alloc.buffers[bits].Put(p)
-	atomic.AddInt64(&alloc.objCounts[bits], -1)
+	alloc.buffers[idx].Put(p)
+	atomic.AddInt64(&alloc.objCounts[idx], -1)
 	return nil
 }
 
@@ -156,9 +157,9 @@ func (alloc *Allocator) StartAutoClean(interval time.Duration) {
 				case <-ticker.C:
 					for k := range alloc.buffers {
 						k := k
-						size := 1 << uint32(k)
+						size := 1 << uint(k)
 						alloc.buffers[k].New = func() any {
-							b := make([]byte, size)
+							b := make(AppendBuffer, size)
 							return &b
 						}
 						// 触发GC，丢弃旧对象,只有重置 `New` 字段并发生 GC，才会清理池中未被引用的对象。
@@ -174,7 +175,10 @@ func (alloc *Allocator) StartAutoClean(interval time.Duration) {
 }
 
 func (alloc *Allocator) StopAutoClean() {
-	if alloc.cleanStop != nil {
-		close(alloc.cleanStop)
-	}
+	alloc.cleanStopOnce.Do(func() {
+		if alloc.cleanStop != nil {
+			close(alloc.cleanStop)
+			alloc.cleanStop = nil
+		}
+	})
 }

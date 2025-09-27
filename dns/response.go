@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"unsafe"
 
-	"github.com/dnsoa/go/pool"
+	"github.com/dnsoa/go/sync"
 )
 
 type Question struct {
@@ -82,7 +82,7 @@ type Response struct {
 	Header Header
 }
 
-var responsePool = pool.NewPool(func() *Response {
+var responsePool = sync.NewPool(func() *Response {
 	resp := new(Response)
 	resp.Answer = make([]RR, 0, 8)
 	resp.Ns = make([]RR, 0, 8)

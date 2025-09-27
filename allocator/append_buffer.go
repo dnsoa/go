@@ -1,10 +1,11 @@
-package pool
+package allocator
 
 import (
 	"encoding/base64"
 	"encoding/hex"
 	"net/netip"
 	"strconv"
+	"unicode/utf8"
 )
 
 type AppendBuffer []byte
@@ -72,6 +73,39 @@ func (b AppendBuffer) Uint16(i uint16) AppendBuffer {
 func (b AppendBuffer) Uint32(i uint32) AppendBuffer {
 	return b.Uint64(uint64(i), 10)
 }
+
+func (b AppendBuffer) Reset() AppendBuffer {
+	return b[:0]
+}
+
+func (b AppendBuffer) Truncate(n int) AppendBuffer {
+	if n < 0 {
+		n = 0
+	}
+	if n > len(b) {
+		n = len(b)
+	}
+	return b[:n]
+}
+
+func (b AppendBuffer) Rune(r rune) AppendBuffer {
+	var tmp [4]byte
+	m := utf8.EncodeRune(tmp[:], r)
+	return append(b, tmp[:m]...)
+}
+
+func (b AppendBuffer) Space() AppendBuffer {
+	return append(b, ' ')
+}
+
+func (b AppendBuffer) Comma() AppendBuffer {
+	return append(b, ',')
+}
+
+func (b AppendBuffer) Newline() AppendBuffer {
+	return append(b, '\n')
+}
+
 func (b AppendBuffer) Cap() int {
 	return cap(b)
 }

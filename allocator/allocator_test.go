@@ -20,17 +20,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package pool
+package allocator
 
 import (
-	"math/bits"
-	"math/rand/v2"
 	"testing"
 	"time"
 )
 
 func TestAlloc(t *testing.T) {
-	alloc := NewAllocator(WithZeroOnPut(true))
+	alloc := New(WithZeroOnPut(true))
 	t.Log(alloc.CurrentBytes())
 	for range 10 {
 		alloc.Get(DefaultMaxSize)
@@ -48,7 +46,7 @@ func TestAlloc(t *testing.T) {
 }
 
 func TestAllocGet(t *testing.T) {
-	alloc := NewAllocator()
+	alloc := New()
 	if len(*alloc.Get(1)) != 1 {
 		t.Fatal(1)
 	}
@@ -76,7 +74,7 @@ func TestAllocGet(t *testing.T) {
 }
 
 func TestAllocPut(t *testing.T) {
-	alloc := NewAllocator()
+	alloc := New()
 	if err := alloc.Put(nil); err == nil {
 		t.Fatal("put nil misbehavior")
 	}
@@ -103,7 +101,7 @@ func TestAllocPut(t *testing.T) {
 }
 
 func TestAllocPutThenGet(t *testing.T) {
-	alloc := NewAllocator()
+	alloc := New()
 	data := alloc.Get(4)
 	alloc.Put(data)
 	newData := alloc.Get(4)
@@ -116,32 +114,8 @@ var (
 	debruijinPos = [...]byte{0, 9, 1, 10, 13, 21, 2, 29, 11, 14, 16, 18, 22, 25, 3, 30, 8, 12, 20, 28, 15, 17, 24, 7, 19, 27, 23, 6, 26, 5, 4, 31}
 )
 
-// msb return the pos of most significiant bit
-func msb(size int) byte {
-	v := uint32(size)
-	v |= v >> 1
-	v |= v >> 2
-	v |= v >> 4
-	v |= v >> 8
-	v |= v >> 16
-	return debruijinPos[(v*0x07C4ACDD)>>27]
-}
-
-func BenchmarkMSB(b *testing.B) {
-	b.Run("msb", func(b *testing.B) {
-		for b.Loop() {
-			msb(rand.Int())
-		}
-	})
-	b.Run("bits.Len", func(b *testing.B) {
-		for b.Loop() {
-			bits.Len(uint(rand.Int()))
-		}
-	})
-}
-
 func BenchmarkAlloc(b *testing.B) {
-	alloc := NewAllocator()
+	alloc := New()
 	for i := 0; b.Loop(); i++ {
 		size := i % (DefaultMaxSize + 1)
 		if size == 0 {
