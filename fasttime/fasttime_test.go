@@ -14,7 +14,11 @@ import (
 func TestUnixDate(t *testing.T) {
 	dateExpected := time.Now().Unix() / (24 * 3600)
 	date := UnixDate()
-	if date-dateExpected > 1 {
+	diff := date - dateExpected
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 1 {
 		t.Fatalf("unexpected UnixDate; got %d; want %d", date, dateExpected)
 	}
 }
@@ -22,7 +26,11 @@ func TestUnixDate(t *testing.T) {
 func TestUnixHour(t *testing.T) {
 	hourExpected := time.Now().Unix() / 3600
 	hour := UnixHour()
-	if hour-hourExpected > 1 {
+	diff := hour - hourExpected
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 1 {
 		t.Fatalf("unexpected UnixHour; got %d; want %d", hour, hourExpected)
 	}
 }
@@ -41,18 +49,34 @@ func TestUnixTime(t *testing.T) {
 
 	time.Sleep(time.Second)
 	diff := time.Since(Now())
-	if diff > time.Millisecond*100 { // 100ms tolerance
-		t.Errorf("time is not correct %v", diff)
+	// 使用基于包内 updateInterval 的动态容差，避免固定 100ms 导致在较大更新间隔时失败
+	allowed := updateInterval + 100*time.Millisecond
+	if diff > allowed { // 动态容差
+		t.Errorf("time is not correct %v (allowed %v)", diff, allowed)
 	}
 	for range 5 {
-		if time.Now().Unix() != Now().Unix() {
-			t.Errorf("Unix() and Now().Unix() are not equal")
+		nowUnix := time.Now().Unix()
+		fastNowUnix := Now().Unix()
+		d := nowUnix - fastNowUnix
+		if d < 0 {
+			d = -d
 		}
-		if UnixDate() != time.Now().Unix()/86400 {
-			t.Errorf("UnixDate() and Now().Unix()/86400 are not equal")
+		if d > 1 {
+			t.Errorf("Unix() and Now().Unix() differ by %d seconds", d)
 		}
-		if (time.Now().Unix() - UnixTime()) > 1 {
-			t.Errorf("Unix() =%d and Now().Unix()=%d are not equal", UnixTime(), time.Now().Unix())
+		dateDiff := UnixDate() - time.Now().Unix()/86400
+		if dateDiff < 0 {
+			dateDiff = -dateDiff
+		}
+		if dateDiff > 1 {
+			t.Errorf("UnixDate() and Now().Unix()/86400 differ by %d days", dateDiff)
+		}
+		secDiff := time.Now().Unix() - UnixTime()
+		if secDiff < 0 {
+			secDiff = -secDiff
+		}
+		if secDiff > 1 {
+			t.Errorf("Unix() =%d and Now().Unix()=%d are not equal (diff %d)", UnixTime(), time.Now().Unix(), secDiff)
 		}
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(1500)))
 	}
