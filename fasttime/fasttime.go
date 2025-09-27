@@ -3,7 +3,6 @@ package fasttime
 import (
 	"os"
 	"sync/atomic"
-	"testing"
 	"time"
 )
 
@@ -14,7 +13,21 @@ var updateInterval = func() time.Duration {
 	return 200 * time.Millisecond
 }()
 
+// currentTime holds unix nano timestamp updated periodically
+var currentTime atomic.Int64
+
+// nowFunc holds the function used to obtain current time. Tests can replace it.
+var nowFunc atomic.Value // stores func() time.Time
+
+func defaultNow() time.Time {
+	return time.Unix(0, currentTime.Load()).In(time.Local)
+}
+
 func init() {
+	// initialize currentTime and nowFunc
+	currentTime.Store(time.Now().UnixNano())
+	nowFunc.Store(func() time.Time { return defaultNow() })
+
 	go func() {
 		ticker := time.NewTicker(updateInterval)
 		defer ticker.Stop()
@@ -24,31 +37,28 @@ func init() {
 	}()
 }
 
-var currentTime = func() *atomic.Int64 {
-	var x atomic.Int64
-	t := time.Now()
-	x.Store(t.UnixNano())
-	return &x
-}()
+// SetNowFunc sets a custom function to produce current time (useful for tests).
+func SetNowFunc(f func() time.Time) {
+	nowFunc.Store(f)
+}
+
+// ResetNowFunc restores the default (cached) now function.
+func ResetNowFunc() {
+	nowFunc.Store(func() time.Time { return defaultNow() })
+}
 
 // Now returns current time in Local timezone
 func Now() time.Time {
-	if testing.Testing() {
-		// When executing inside the tests, use the time package directly.
-		// This allows to override time using synctest package.
-		return time.Now()
-	}
-	return time.Unix(0, UnixNano()).In(time.Local)
+	f := nowFunc.Load().(func() time.Time)
+	return f()
 }
 
 // UnixNano returns the current unix timestamp in nanoseconds.
 //
 // It is faster than time.Now().UnixNano()
 func UnixNano() int64 {
-	if testing.Testing() {
-		return time.Now().UnixNano()
-	}
-	return currentTime.Load()
+	f := nowFunc.Load().(func() time.Time)
+	return f().UnixNano()
 }
 
 // UnixTime returns the current unix timestamp in seconds.
@@ -81,5 +91,6 @@ func Since(t time.Time) time.Duration {
 // Until returns the duration until t.
 // It is shorthand for t.Sub(time.Now()).
 func Until(t time.Time) time.Duration {
-	return t.Sub(Now())
+	// Use unix-nano arithmetic to avoid mixing underlying Now implementations
+	return time.Duration(t.UnixNano() - UnixNano())
 }
