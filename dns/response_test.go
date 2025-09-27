@@ -133,7 +133,6 @@ func TestResponseUnpack(t *testing.T) {
 	r.False(resp.Header.Zero())
 	r.False(resp.Header.AuthenticatedData())
 	r.True(resp.Header.Authoritative())
-	// r.Equal("axtqs.com", b2s(resp.Domain))
 	r.Equal("axtqs.com.", b2s(resp.Question.Name))
 	r.Equal(TypeA, resp.Question.Type)
 	r.Equal(ClassINET, resp.Question.Class)
@@ -152,6 +151,7 @@ func TestResponseUnpack(t *testing.T) {
 	r.Equal(1, len(resp.Extra))
 	r.Equal(TypeOPT, resp.Extra[0].Header().Rrtype)
 	r.Equal(uint16(1232), uint16(resp.Extra[0].Header().Class))
-	opt := resp.Extra[0].(*OPTRecord)
+	opt := resp.Extra[0].(*OPT)
 	r.Equal(uint32(0), opt.Hdr.Ttl)
+	// r.Equal(OptionCodeCookie, opt.Options[0].Code)
 }

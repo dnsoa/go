@@ -1,5 +1,7 @@
 package dns
 
+import "strings"
+
 type (
 	// Type is a DNS type.
 	Type uint16
@@ -110,6 +112,88 @@ const (
 	ClassNONE   Class = 254
 	ClassANY    Class = 255
 )
+
+// TypeToRR is a map of constructors for each RR type.
+var TypeToRR = map[Type]func() RR{
+	TypeA: func() RR { return new(A) },
+	// TypeAAAA: func() RR { return new(AAAA) },
+	// TypeAFSDB:      func() RR { return new(AFSDB) },
+	// TypeAMTRELAY:   func() RR { return new(AMTRELAY) },
+	// TypeANY:        func() RR { return new(ANY) },
+	// TypeAPL:        func() RR { return new(APL) },
+	// TypeAVC:        func() RR { return new(AVC) },
+	// TypeCAA:        func() RR { return new(CAA) },
+	// TypeCDNSKEY:    func() RR { return new(CDNSKEY) },
+	// TypeCDS:        func() RR { return new(CDS) },
+	// TypeCERT:       func() RR { return new(CERT) },
+	// TypeCNAME:      func() RR { return new(CNAME) },
+	// TypeCSYNC:      func() RR { return new(CSYNC) },
+	// TypeDHCID:      func() RR { return new(DHCID) },
+	// TypeDLV:        func() RR { return new(DLV) },
+	// TypeDNAME:      func() RR { return new(DNAME) },
+	// TypeDNSKEY:     func() RR { return new(DNSKEY) },
+	// TypeDS:         func() RR { return new(DS) },
+	// TypeEID:        func() RR { return new(EID) },
+	// TypeEUI48:      func() RR { return new(EUI48) },
+	// TypeEUI64:      func() RR { return new(EUI64) },
+	// TypeGID:        func() RR { return new(GID) },
+	// TypeGPOS:       func() RR { return new(GPOS) },
+	// TypeHINFO:      func() RR { return new(HINFO) },
+	// TypeHIP:        func() RR { return new(HIP) },
+	// TypeHTTPS:      func() RR { return new(HTTPS) },
+	// TypeIPSECKEY:   func() RR { return new(IPSECKEY) },
+	// TypeISDN:       func() RR { return new(ISDN) },
+	// TypeKEY:        func() RR { return new(KEY) },
+	// TypeKX:         func() RR { return new(KX) },
+	// TypeL32:        func() RR { return new(L32) },
+	// TypeL64:        func() RR { return new(L64) },
+	// TypeLOC:        func() RR { return new(LOC) },
+	// TypeLP:         func() RR { return new(LP) },
+	// TypeMB:         func() RR { return new(MB) },
+	// TypeMD:         func() RR { return new(MD) },
+	// TypeMF:         func() RR { return new(MF) },
+	// TypeMG:         func() RR { return new(MG) },
+	// TypeMINFO:      func() RR { return new(MINFO) },
+	// TypeMR:         func() RR { return new(MR) },
+	// TypeMX:         func() RR { return new(MX) },
+	// TypeNAPTR:      func() RR { return new(NAPTR) },
+	// TypeNID:        func() RR { return new(NID) },
+	// TypeNIMLOC:     func() RR { return new(NIMLOC) },
+	// TypeNINFO:      func() RR { return new(NINFO) },
+	// TypeNS:         func() RR { return new(NS) },
+	// TypeNSAPPTR:    func() RR { return new(NSAPPTR) },
+	// TypeNSEC:       func() RR { return new(NSEC) },
+	// TypeNSEC3:      func() RR { return new(NSEC3) },
+	// TypeNSEC3PARAM: func() RR { return new(NSEC3PARAM) },
+	// TypeNULL:       func() RR { return new(NULL) },
+	// TypeNXT:        func() RR { return new(NXT) },
+	// TypeOPENPGPKEY: func() RR { return new(OPENPGPKEY) },
+	TypeOPT: func() RR { return new(OPT) },
+	// TypePTR:        func() RR { return new(PTR) },
+	// TypePX:         func() RR { return new(PX) },
+	// TypeRKEY:       func() RR { return new(RKEY) },
+	// TypeRP:         func() RR { return new(RP) },
+	// TypeRRSIG:      func() RR { return new(RRSIG) },
+	// TypeRT:         func() RR { return new(RT) },
+	// TypeSIG:        func() RR { return new(SIG) },
+	// TypeSMIMEA:     func() RR { return new(SMIMEA) },
+	// TypeSOA:        func() RR { return new(SOA) },
+	// TypeSPF:        func() RR { return new(SPF) },
+	// TypeSRV:        func() RR { return new(SRV) },
+	// TypeSSHFP:      func() RR { return new(SSHFP) },
+	// TypeSVCB:       func() RR { return new(SVCB) },
+	// TypeTA:         func() RR { return new(TA) },
+	// TypeTALINK:     func() RR { return new(TALINK) },
+	// TypeTKEY:       func() RR { return new(TKEY) },
+	// TypeTLSA:       func() RR { return new(TLSA) },
+	// TypeTSIG:       func() RR { return new(TSIG) },
+	// TypeTXT:        func() RR { return new(TXT) },
+	// TypeUID:        func() RR { return new(UID) },
+	// TypeUINFO:      func() RR { return new(UINFO) },
+	// TypeURI:        func() RR { return new(URI) },
+	// TypeX25:        func() RR { return new(X25) },
+	// TypeZONEMD:     func() RR { return new(ZONEMD) },
+}
 
 // ClassToString is a maps Classes to strings for each CLASS wire type.
 var ClassToString = map[Class]string{
@@ -567,4 +651,60 @@ func ParseType(s string) (t Type) {
 		t = TypeReserved
 	}
 	return
+}
+
+// Error represents a DNS error.
+type Error struct{ err string }
+
+func (e *Error) Error() string {
+	if e == nil {
+		return "dns: <nil>"
+	}
+	return "dns: " + e.err
+}
+
+func sprintName(s string) string {
+	var dst strings.Builder
+
+	for i := 0; i < len(s); {
+		if s[i] == '.' {
+			if dst.Len() != 0 {
+				dst.WriteByte('.')
+			}
+			i++
+			continue
+		}
+
+		b, n := nextByte(s, i)
+		if n == 0 {
+			// Drop "dangling" incomplete escapes.
+			if dst.Len() == 0 {
+				return s[:i]
+			}
+			break
+		}
+		if isDomainNameLabelSpecial(b) {
+			if dst.Len() == 0 {
+				dst.Grow(len(s) * 2)
+				dst.WriteString(s[:i])
+			}
+			dst.WriteByte('\\')
+			dst.WriteByte(b)
+		} else if b < ' ' || b > '~' { // unprintable, use \DDD
+			if dst.Len() == 0 {
+				dst.Grow(len(s) * 2)
+				dst.WriteString(s[:i])
+			}
+			dst.WriteString(escapeByte(b))
+		} else {
+			if dst.Len() != 0 {
+				dst.WriteByte(b)
+			}
+		}
+		i += n
+	}
+	if dst.Len() == 0 {
+		return s
+	}
+	return dst.String()
 }

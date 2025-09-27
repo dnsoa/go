@@ -110,3 +110,109 @@ Loop:
 	}
 	return s, off1, nil
 }
+
+// UnpackRR unpacks msg[off:] into an RR.
+func UnpackRR(msg []byte, off int) (rr RR, off1 int, err error) {
+	h, off, msg, err := unpackHeader(msg, off)
+	if err != nil {
+		return nil, len(msg), err
+	}
+
+	return UnpackRRWithHeader(h, msg, off)
+}
+
+// UnpackRRWithHeader unpacks the record type specific payload given an existing
+// RR_Header.
+func UnpackRRWithHeader(h RR_Header, msg []byte, off int) (rr RR, off1 int, err error) {
+	if newFn, ok := TypeToRR[h.Rrtype]; ok {
+		rr = newFn()
+		*rr.Header() = h
+	} else {
+		rr = &RFC3597{Hdr: h}
+	}
+
+	if off < 0 || off > len(msg) {
+		return &h, off, &Error{err: "bad off"}
+	}
+
+	end := off + int(h.Rdlength)
+	if end < off || end > len(msg) {
+		return &h, end, &Error{err: "bad rdlength"}
+	}
+
+	if noRdata(h) {
+		return rr, off, nil
+	}
+
+	off, err = rr.unpack(msg, off)
+	if err != nil {
+		return nil, end, err
+	}
+	if off != end {
+		return &h, end, &Error{err: "bad rdlength"}
+	}
+
+	return rr, off, nil
+}
+
+// unpackHeader unpacks an RR header, returning the offset to the end of the header and a
+// re-sliced msg according to the expected length of the RR.
+func unpackHeader(msg []byte, off int) (rr RR_Header, off1 int, truncmsg []byte, err error) {
+	hdr := RR_Header{}
+	if off == len(msg) {
+		return hdr, off, msg, nil
+	}
+	var u16 uint16
+	var name []byte
+
+	name, off, err = UnpackDomainName(msg, off)
+	if err != nil {
+		return hdr, len(msg), msg, err
+	}
+	hdr.Name = b2s(name)
+	u16, off, err = unpackUint16(msg, off)
+	if err != nil {
+		return hdr, len(msg), msg, err
+	}
+	hdr.Rrtype = Type(u16)
+	u16, off, err = unpackUint16(msg, off)
+	if err != nil {
+		return hdr, len(msg), msg, err
+	}
+	hdr.Class = Class(u16)
+	hdr.Ttl, off, err = unpackUint32(msg, off)
+	if err != nil {
+		return hdr, len(msg), msg, err
+	}
+	hdr.Rdlength, off, err = unpackUint16(msg, off)
+	if err != nil {
+		return hdr, len(msg), msg, err
+	}
+	msg, err = truncateMsgFromRdlength(msg, off, hdr.Rdlength)
+	return hdr, off, msg, err
+}
+
+// unpackRRslice unpacks msg[off:] into an []RR.
+// If we cannot unpack the whole array, then it will return nil
+func unpackRRslice(l int, msg []byte, off int) (dst1 []RR, off1 int, err error) {
+	var r RR
+	// Don't pre-allocate, l may be under attacker control
+	var dst []RR
+	for i := 0; i < l; i++ {
+		off1 := off
+		r, off, err = UnpackRR(msg, off)
+		if err != nil {
+			off = len(msg)
+			break
+		}
+		// If offset does not increase anymore, l is a lie
+		if off1 == off {
+			break
+		}
+		dst = append(dst, r)
+	}
+	if err != nil && off == len(msg) {
+		dst = nil
+	}
+	return dst, off, err
+}

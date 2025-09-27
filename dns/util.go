@@ -85,3 +85,24 @@ func isDomainNameLabelSpecial(b byte) bool {
 	}
 	return false
 }
+
+func nextByte(s string, offset int) (byte, int) {
+	if offset >= len(s) {
+		return 0, 0
+	}
+	if s[offset] != '\\' {
+		// not an escape sequence
+		return s[offset], 1
+	}
+	switch len(s) - offset {
+	case 1: // dangling escape
+		return 0, 0
+	case 2, 3: // too short to be \ddd
+	default: // maybe \ddd
+		if isDDD(s[offset+1:]) {
+			return dddToByte(s[offset+1:]), 4
+		}
+	}
+	// not \ddd, just an RFC 1035 "quoted" character
+	return s[offset+1], 2
+}

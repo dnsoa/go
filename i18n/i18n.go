@@ -16,6 +16,7 @@ var (
 	defaultPrinter = message.NewPrinter(defaultLocale)
 	// 用户语言缓存池
 	userLocalizers sync.Map
+	langLocalizers sync.Map
 )
 
 type contextKey string
@@ -40,16 +41,18 @@ func (l *localizer) Printer() *message.Printer {
 
 // 从 context 获取用户特定的 localizer
 func LocalizerFromContext(ctx context.Context) *localizer {
-	// 优先使用用户ID获取用户专属语言设置
-	if userID := ctx.Value(UserIDKey); userID != nil {
-		if cached, exists := userLocalizers.Load(userID); exists {
-			return cached.(*localizer)
-		}
-	}
-
-	// 其次使用 context 中的语言设置
+	// 先使用 context 中的语言设置（优先覆盖用户偏好）
 	if lang, ok := ctx.Value(LanguageKey).(language.Tag); ok {
 		return getOrCreateLocalizer(lang.String(), lang)
+	}
+
+	// 优先使用用户ID获取用户专属语言设置（仅支持 string 类型）
+	if userID := ctx.Value(UserIDKey); userID != nil {
+		if uid, ok := userID.(string); ok {
+			if cached, exists := userLocalizers.Load(uid); exists {
+				return cached.(*localizer)
+			}
+		}
 	}
 
 	// 最后使用全局设置
@@ -57,7 +60,7 @@ func LocalizerFromContext(ctx context.Context) *localizer {
 }
 
 // 设置用户语言偏好
-func SetUserLanguage[T comparable](userID T, tag language.Tag) {
+func SetUserLanguage(userID string, tag language.Tag) {
 	localizer := &localizer{
 		tag:     tag,
 		printer: message.NewPrinter(tag),
@@ -65,29 +68,55 @@ func SetUserLanguage[T comparable](userID T, tag language.Tag) {
 	userLocalizers.Store(userID, localizer)
 }
 
-func GetUserLanguage[T comparable](userID T) (language.Tag, bool) {
+func GetUserLanguage(userID string) (language.Tag, bool) {
 	if cached, exists := userLocalizers.Load(userID); exists {
 		return cached.(*localizer).tag, true
 	}
 	return language.Und, false
 }
 
-func ClearUserLanguage[T comparable](userID T) {
+func ClearUserLanguage(userID string) {
 	userLocalizers.Delete(userID)
+}
+
+// ClearAllUserLanguages 删除所有用户本地化设置
+func ClearAllUserLanguages() {
+	userLocalizers.Range(func(k, v any) bool {
+		userLocalizers.Delete(k)
+		return true
+	})
 }
 
 // 获取或创建 localizer（带缓存）
 func getOrCreateLocalizer(key string, tag language.Tag) *localizer {
-	if cached, exists := userLocalizers.Load(key); exists {
+	if cached, exists := langLocalizers.Load(key); exists {
 		return cached.(*localizer)
 	}
 
-	localizer := &localizer{
+	loc := &localizer{
 		tag:     tag,
 		printer: message.NewPrinter(tag),
 	}
-	userLocalizers.Store(key, localizer)
-	return localizer
+	langLocalizers.Store(key, loc)
+	return loc
+}
+
+// ClearLangLocalizers 清理按语言缓存
+func ClearLangLocalizers() {
+	langLocalizers.Range(func(k, v any) bool {
+		langLocalizers.Delete(k)
+		return true
+	})
+}
+
+// WithUserID returns a new context with the given user ID set.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, UserIDKey, userID)
+}
+
+// WithLanguage returns a new context with the given language tag set.
+func WithLanguage(ctx context.Context, tag language.Tag) context.Context {
+	return context.WithValue(ctx, LanguageKey, tag)
 }
 
 // 支持 context 的多语言文本获取
@@ -114,6 +143,14 @@ func SetLanguage(tag language.Tag) {
 		printer: p,
 	}
 	altLocalizer.Store(trampoline)
+}
+
+func GetGlobalLanguage() language.Tag {
+	return Localizer().tag
+}
+
+func ResetGlobalLanguage() {
+	SetLanguage(defaultLocale)
 }
 
 func GetText(key message.Reference, a ...any) string {

@@ -18,7 +18,7 @@ type Name struct {
 }
 
 type Request struct {
-	OPT      OPTRecord
+	OPT      OPT
 	Raw      []byte
 	Domain   []byte
 	Question Question
@@ -114,7 +114,7 @@ func (r *Request) SetEDNS0ClientSubnet(clientSubnet netip.Prefix) error {
 }
 
 func (r *Request) SetEDNS0(maxSize uint16, do bool) {
-	r.OPT = OPTRecord{
+	r.OPT = OPT{
 		Hdr: RR_Header{
 			Name:   ".",
 			Rrtype: TypeOPT,
@@ -207,7 +207,7 @@ func (r *Request) Unpack(payload []byte) error {
 }
 
 func (r *Request) Reset() {
-	r.OPT = OPTRecord{}
+	r.OPT = OPT{}
 	r.Raw = r.Raw[:0]
 	r.Domain = r.Domain[:0]
 	r.Question = Question{}

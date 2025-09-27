@@ -76,7 +76,7 @@ const (
 	_DO                                   = 1 << 15 // DNSSEC OK
 )
 
-type OPTRecord struct {
+type OPT struct {
 	// Name     string
 	// Type     Type
 	// MaxSize  uint16
@@ -86,8 +86,36 @@ type OPTRecord struct {
 	Hdr     RR_Header
 }
 
-func (rr *OPTRecord) Header() *RR_Header { return &rr.Hdr }
-func (r *OPTRecord) Pack() []byte {
+func (rr *OPT) Header() *RR_Header { return &rr.Hdr }
+func (r *OPT) String() string {
+	s := r.Hdr.String() + "\n"
+	for _, o := range r.Options {
+		s += "    Option: " + o.String() + "\n"
+	}
+	return s
+}
+func (r *OPT) pack(msg []byte, off int) (off1 int, err error) {
+	// OPT has no RDATA to pack.
+	return off, nil
+}
+
+func (r *OPT) unpack(msg []byte, off int) (int, error) {
+	fmt.Println("unpack OPT")
+	for i := off; i < off+int(r.Hdr.Class); {
+		if i+4 > len(msg) {
+			return off, ErrInvalidOPT
+		}
+		code := OptionCode(binary.BigEndian.Uint16(msg[i : i+2]))
+		length := binary.BigEndian.Uint16(msg[i+2 : i+4])
+		if i+4+int(length) > len(msg) {
+			return off, ErrInvalidOPT
+		}
+		r.Options = append(r.Options, Option{Code: code, Length: length, Data: msg[i+4 : i+4+int(length)]})
+		i += 4 + int(length)
+	}
+	return off + int(r.Hdr.Rdlength), nil
+}
+func (r *OPT) Pack() []byte {
 	var b [11]byte
 	binary.BigEndian.PutUint16(b[1:3], uint16(r.Hdr.Rrtype))
 	binary.BigEndian.PutUint16(b[3:5], uint16(r.Hdr.Class))
@@ -97,7 +125,7 @@ func (r *OPTRecord) Pack() []byte {
 
 }
 
-func (r *OPTRecord) Unpack(data []byte) error {
+func (r *OPT) Unpack(data []byte) error {
 	if len(data) < 11 {
 		return ErrInvalidOPT
 	}
@@ -126,7 +154,7 @@ func (r *OPTRecord) Unpack(data []byte) error {
 	return nil
 }
 
-func (r *OPTRecord) AddOption(code OptionCode, data []byte) {
+func (r *OPT) AddOption(code OptionCode, data []byte) {
 	r.Options = append(r.Options, Option{Code: code, Length: uint16(len(data)), Data: data})
 	r.Hdr.Rdlength += 4 + uint16(len(data))
 }

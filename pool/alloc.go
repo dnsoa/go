@@ -58,7 +58,7 @@ func NewAllocator(opts ...func(*Allocator)) *Allocator {
 		k := k
 		size := 1 << uint32(k)
 		alloc.buffers[k].New = func() any {
-			b := make([]byte, size)
+			b := make(AppendBuffer, size)
 			return &b
 		}
 	}
@@ -81,12 +81,12 @@ func WithAutoClean(interval time.Duration) func(*Allocator) {
 }
 
 // Get 返回一个合适大小的 []byte 指针
-func (alloc *Allocator) Get(size int) *[]byte {
+func (alloc *Allocator) Get(size int) *AppendBuffer {
 	if size <= 0 {
 		panic("Size is negative")
 	}
 	if size > alloc.maxSize {
-		b := make([]byte, size)
+		b := make(AppendBuffer, size)
 		return &b
 	}
 	bits := bits.Len(uint(size))
@@ -94,7 +94,7 @@ func (alloc *Allocator) Get(size int) *[]byte {
 		bits--
 	}
 
-	p := alloc.buffers[bits].Get().(*[]byte)
+	p := alloc.buffers[bits].Get().(*AppendBuffer)
 	*p = (*p)[:size]
 	atomic.AddInt64(&alloc.objCounts[bits], 1)
 	return p
@@ -107,7 +107,7 @@ func (alloc *Allocator) GetBytes(size int) []byte {
 }
 
 // Put 回收 []byte 指针到池
-func (alloc *Allocator) Put(p *[]byte) error {
+func (alloc *Allocator) Put(p *AppendBuffer) error {
 	if p == nil {
 		return errors.New("allocator Put() nil pointer")
 	}

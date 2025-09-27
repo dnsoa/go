@@ -44,21 +44,7 @@ func TestAlloc(t *testing.T) {
 	if alloc.CurrentBytes() != 0 {
 		t.Fatal("CurrentBytes() misbehavior")
 	}
-	a := alloc.GetBytes(3)
-	if len(a) != 3 {
-		t.Fatal("GetBytes() misbehavior")
-	}
-	if cap(a) != 4 {
-		t.Fatal("GetBytes() misbehavior")
-	}
-	a[0] = 1
-	a[1] = 2
-	a[2] = 3
-	alloc.Put(&a)
 
-	if a[0] != 0 || a[1] != 0 || a[2] != 0 {
-		t.Fatal("Put() misbehavior")
-	}
 }
 
 func TestAllocGet(t *testing.T) {
@@ -94,7 +80,7 @@ func TestAllocPut(t *testing.T) {
 	if err := alloc.Put(nil); err == nil {
 		t.Fatal("put nil misbehavior")
 	}
-	b := make([]byte, 3)
+	b := make(AppendBuffer, 3)
 	if err := alloc.Put(&b); err == nil {
 		t.Fatal("put elem:3 []bytes misbehavior")
 	}

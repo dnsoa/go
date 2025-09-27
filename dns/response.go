@@ -3,6 +3,7 @@ package dns
 import (
 	"encoding/binary"
 	"net"
+	"strconv"
 	"unsafe"
 
 	"github.com/dnsoa/go/pool"
@@ -42,49 +43,38 @@ type RR_Header struct {
 }
 
 func (h *RR_Header) Header() *RR_Header { return h }
+func (h *RR_Header) pack(msg []byte, off int) (off1 int, err error) {
+	// RR_Header has no RDATA to pack.
+	return off, nil
+}
+func (h *RR_Header) unpack(msg []byte, off int) (int, error) {
+	panic("dns: internal error: unpack should never be called on RR_Header")
+}
+func (h *RR_Header) String() string {
+	var s string
+
+	if h.Rrtype == TypeOPT {
+		s = ";"
+		// and maybe other things
+	}
+
+	s += sprintName(h.Name) + "\t"
+	s += strconv.FormatInt(int64(h.Ttl), 10) + "\t"
+	s += Class(h.Class).String() + "\t"
+	s += Type(h.Rrtype).String() + "\t"
+	return s
+}
 
 type RR interface {
 	Header() *RR_Header
-	Pack() []byte
-}
-
-type A struct {
-	A   net.IP
-	Hdr RR_Header
-}
-
-func (rr *A) Header() *RR_Header { return &rr.Hdr }
-func (rr *A) Pack() []byte {
-	var answer [16]byte
-	ip := rr.A.To4()
-	if ip == nil {
-		return nil
-	}
-	// NAME
-	answer[0] = 0xc0
-	answer[1] = 0x0c
-
-	// TYPE
-	binary.BigEndian.PutUint16(answer[2:4], uint16(TypeA))
-
-	// CLASS
-	binary.BigEndian.PutUint16(answer[4:6], uint16(rr.Hdr.Class))
-
-	// TTL
-	binary.BigEndian.PutUint32(answer[6:10], rr.Hdr.Ttl)
-
-	// RDLENGTH
-	binary.BigEndian.PutUint16(answer[10:12], 4)
-
-	// RDATA
-	copy(answer[12:], ip[:])
-
-	return answer[:]
+	pack(msg []byte, off int) (off1 int, err error)
+	unpack(msg []byte, off int) (off1 int, err error)
+	String() string
 }
 
 type Response struct {
-	Domain []byte
 	Answer []RR
+	Ns     []RR
 	Extra  []RR
 	// Question holds the question section of the response message.
 	Question Question
@@ -95,6 +85,7 @@ type Response struct {
 var responsePool = pool.NewPool(func() *Response {
 	resp := new(Response)
 	resp.Answer = make([]RR, 0, 8)
+	resp.Ns = make([]RR, 0, 8)
 	resp.Extra = make([]RR, 0, 8)
 	return resp
 })
@@ -130,9 +121,9 @@ func (r *Response) Pack() []byte {
 	buf = append(buf, EncodeDomain(nil, b2s(r.Question.Name))...)
 	buf = append(buf, byte(r.Question.Type>>8), byte(r.Question.Type))
 	buf = append(buf, byte(r.Question.Class>>8), byte(r.Question.Class))
-	for _, rr := range r.Answer {
-		buf = append(buf, rr.Pack()...)
-	}
+	// for _, rr := range r.Answer {
+	// 	buf = append(buf, rr.Pack()...)
+	// }
 	return buf
 }
 
@@ -150,33 +141,28 @@ func (r *Response) Unpack(payload []byte) error {
 	}
 	r.Question = q
 
-	r.Domain = DecodeDomain(r.Question.Name)
+	r.Answer, off, err = unpackRRslice(int(r.Header.Ancount), payload, off)
+	if err != nil {
+		return err
+	}
 
-	var rr RR
+	r.Ns, off, err = unpackRRslice(int(r.Header.Nscount), payload, off)
+	if err != nil {
+		return err
+	}
+	r.Extra, _, err = unpackRRslice(int(r.Header.Arcount), payload, off)
+	if err != nil {
+		return err
+	}
 
-	for i := uint16(0); i < r.Header.Ancount; i++ {
-		rr, off, err = r.unpackRR(payload, off)
-		if err != nil {
-			return err
-		}
-		r.Answer = append(r.Answer, rr)
-	}
-	for i := uint16(0); i < r.Header.Nscount; i++ {
-		rr, off, err := r.unpackRR(payload, 0)
-		if err != nil {
-			return err
-		}
-		r.Extra = append(r.Extra, rr)
-		payload = payload[off:]
-	}
-	for i := uint16(0); i < r.Header.Arcount; i++ {
-		rr, _, err := r.unpackRR(payload, off)
-		if err != nil {
-			return err
-		}
-		r.Extra = append(r.Extra, rr)
-		// payload = payload[off:]
-	}
+	// for i := uint16(0); i < r.Header.Arcount; i++ {
+	// 	rr, _, err := r.unpackRR(payload, off)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	r.Extra = append(r.Extra, rr)
+	// 	// payload = payload[off:]
+	// }
 
 	return nil
 }
@@ -235,7 +221,7 @@ func (r *Response) unpackRR(data []byte, off int) (RR, int, error) {
 		}
 		off += int(rdlength)
 	case TypeOPT:
-		rr = &OPTRecord{
+		rr = &OPT{
 			Hdr: rrHdr,
 		}
 		off += int(rdlength)
@@ -247,7 +233,6 @@ func (r *Response) unpackRR(data []byte, off int) (RR, int, error) {
 }
 
 func (r *Response) Reset() {
-	r.Domain = r.Domain[:0]
 	r.Answer = r.Answer[:0]
 	r.Extra = r.Extra[:0]
 	r.Question = Question{}

@@ -3,7 +3,80 @@ package dns
 import (
 	"encoding/binary"
 	"net"
+	"strconv"
 )
+
+// RFC3597 represents an unknown/generic RR. See RFC 3597.
+type RFC3597 struct {
+	Hdr   RR_Header
+	Rdata string `dns:"hex"`
+}
+
+func (rr *RFC3597) pack(msg []byte, off int) (off1 int, err error) {
+	off, err = packStringHex(rr.Rdata, msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
+}
+func (rr *RFC3597) unpack(msg []byte, off int) (off1 int, err error) {
+	rdStart := off
+	_ = rdStart
+
+	rr.Rdata, off, err = unpackStringHex(msg, off, rdStart+int(rr.Hdr.Rdlength))
+	if err != nil {
+		return off, err
+	}
+	return off, nil
+}
+func (rr *RFC3597) Header() *RR_Header { return &rr.Hdr }
+func (rr *RFC3597) String() string {
+	// Let's call it a hack
+	s := rfc3597Header(rr.Hdr)
+
+	s += "\\# " + strconv.Itoa(len(rr.Rdata)/2) + " " + rr.Rdata
+	return s
+}
+
+type A struct {
+	A   net.IP
+	Hdr RR_Header
+}
+
+func (rr *A) Header() *RR_Header { return &rr.Hdr }
+func (rr *A) String() string {
+	if rr.A == nil {
+		return rr.Hdr.String()
+	}
+	return rr.Hdr.String() + rr.A.String()
+}
+func (rr *A) pack(msg []byte, off int) (off1 int, err error) {
+	off, err = packDataA(rr.A, msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
+}
+
+func (rr *A) unpack(msg []byte, off int) (off1 int, err error) {
+	if len(msg) < off+net.IPv4len {
+		return off, ErrInvalidRR
+	}
+	data := msg[off : off+net.IPv4len]
+	rr.A = net.IPv4(data[0], data[1], data[2], data[3]).To4()
+	off += net.IPv4len
+	return off, nil
+}
+
+func rfc3597Header(h RR_Header) string {
+	var s string
+
+	s += sprintName(h.Name) + "\t"
+	s += strconv.FormatInt(int64(h.Ttl), 10) + "\t"
+	s += "CLASS" + strconv.Itoa(int(h.Class)) + "\t"
+	s += "TYPE" + strconv.Itoa(int(h.Rrtype)) + "\t"
+	return s
+}
 
 // NS 记录
 type NS struct {
