@@ -178,7 +178,6 @@ func (alloc *Allocator) StopAutoClean() {
 	alloc.cleanStopOnce.Do(func() {
 		if alloc.cleanStop != nil {
 			close(alloc.cleanStop)
-			alloc.cleanStop = nil
 		}
 	})
 }
