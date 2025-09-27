@@ -1,0 +1,4 @@
+github.com/dnsoa/go/assert v1.1.2 h1:NVtMqxq3IoS17NGKoYH9Mc/vASQa5psMo7X/i+gwzyE=
+github.com/dnsoa/go/assert v1.1.2/go.mod h1:aP8iaHTcw49posUgXy9qjr/ICSJ2HNjyQXNOJzo4Zws=
+github.com/dnsoa/go/sync v1.0.0 h1:cQjP86qKOOsNxID7Bb5/gzU2Yz1TyYVLf18E1X6BDDk=
+github.com/dnsoa/go/sync v1.0.0/go.mod h1:w8YwvTuIjbmCZ2jeizPocGSv5gyPYqzlAWAO2opGaHY=

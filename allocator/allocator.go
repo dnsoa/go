@@ -59,7 +59,7 @@ func New(opts ...func(*Allocator)) *Allocator {
 		k := k
 		size := 1 << uint32(k)
 		alloc.buffers[k].New = func() any {
-			b := make(AppendBuffer, size)
+			b := make(Buffer, size)
 			return &b
 		}
 	}
@@ -82,12 +82,12 @@ func WithAutoClean(interval time.Duration) func(*Allocator) {
 }
 
 // Get 返回一个合适大小的 []byte 指针
-func (alloc *Allocator) Get(size int) *AppendBuffer {
+func (alloc *Allocator) Get(size int) *Buffer {
 	if size <= 0 {
 		panic("size must be positive")
 	}
 	if size > alloc.maxSize {
-		b := make(AppendBuffer, size)
+		b := make(Buffer, size)
 		return &b
 	}
 	idx := bits.Len(uint(size))
@@ -95,7 +95,7 @@ func (alloc *Allocator) Get(size int) *AppendBuffer {
 		idx--
 	}
 
-	p := alloc.buffers[idx].Get().(*AppendBuffer)
+	p := alloc.buffers[idx].Get().(*Buffer)
 	*p = (*p)[:size]
 	atomic.AddInt64(&alloc.objCounts[idx], 1)
 	return p
@@ -108,7 +108,7 @@ func (alloc *Allocator) GetBytes(size int) []byte {
 }
 
 // Put 回收 []byte 指针到池
-func (alloc *Allocator) Put(p *AppendBuffer) error {
+func (alloc *Allocator) Put(p *Buffer) error {
 	if p == nil {
 		return errors.New("allocator Put() nil pointer")
 	}
@@ -159,7 +159,7 @@ func (alloc *Allocator) StartAutoClean(interval time.Duration) {
 						k := k
 						size := 1 << uint(k)
 						alloc.buffers[k].New = func() any {
-							b := make(AppendBuffer, size)
+							b := make(Buffer, size)
 							return &b
 						}
 						// 触发GC，丢弃旧对象,只有重置 `New` 字段并发生 GC，才会清理池中未被引用的对象。

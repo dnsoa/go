@@ -78,7 +78,7 @@ func TestAllocPut(t *testing.T) {
 	if err := alloc.Put(nil); err == nil {
 		t.Fatal("put nil misbehavior")
 	}
-	b := make(AppendBuffer, 3)
+	b := make(Buffer, 3)
 	if err := alloc.Put(&b); err == nil {
 		t.Fatal("put elem:3 []bytes misbehavior")
 	}
