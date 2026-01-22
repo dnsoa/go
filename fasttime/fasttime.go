@@ -1,3 +1,12 @@
+// Package fasttime provides a high-performance alternative to time.Now() by caching
+// the current time and updating it periodically in a background goroutine.
+//
+// The cached time reduces system call overhead significantly, making it suitable for
+// high-frequency operations where exact millisecond precision is not required.
+//
+// By default, time is updated every 200ms (configurable via FASTTIME_HIGH_PRECISION
+// environment variable). All times are returned in UTC for consistency across
+// distributed systems.
 package fasttime
 
 import (
@@ -6,30 +15,35 @@ import (
 	"time"
 )
 
-var updateInterval = func() time.Duration {
-	if os.Getenv("FASTTIME_HIGH_PRECISION") == "true" {
-		return time.Millisecond * 10
-	}
-	return 200 * time.Millisecond
-}()
+const (
+	// DefaultUpdateInterval is the default time update interval.
+	DefaultUpdateInterval = 200 * time.Millisecond
 
-// currentTime holds unix nano timestamp updated periodically
+	// HighPrecisionUpdateInterval is the interval used when FASTTIME_HIGH_PRECISION is set.
+	HighPrecisionUpdateInterval = 10 * time.Millisecond
+
+	// SecondsPerDay is the number of seconds in a day.
+	SecondsPerDay = 24 * 3600
+
+	// SecondsPerHour is the number of seconds in an hour.
+	SecondsPerHour = 3600
+)
+
+// currentTime holds unix nano timestamp updated periodically.
 var currentTime atomic.Int64
 
-// nowFunc holds the function used to obtain current time. Tests can replace it.
-var nowFunc atomic.Value // stores func() time.Time
-
-func defaultNow() time.Time {
-	return time.Unix(0, currentTime.Load()).In(time.Local)
-}
-
 func init() {
-	// initialize currentTime and nowFunc
-	currentTime.Store(time.Now().UnixNano())
-	nowFunc.Store(func() time.Time { return defaultNow() })
+	interval := DefaultUpdateInterval
+	if os.Getenv("FASTTIME_HIGH_PRECISION") == "true" {
+		interval = HighPrecisionUpdateInterval
+	}
 
+	// Initialize with current time
+	currentTime.Store(time.Now().UnixNano())
+
+	// Start background updater
 	go func() {
-		ticker := time.NewTicker(updateInterval)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for tm := range ticker.C {
 			currentTime.Store(tm.UnixNano())
@@ -37,60 +51,46 @@ func init() {
 	}()
 }
 
-// SetNowFunc sets a custom function to produce current time (useful for tests).
-func SetNowFunc(f func() time.Time) {
-	nowFunc.Store(f)
-}
-
-// ResetNowFunc restores the default (cached) now function.
-func ResetNowFunc() {
-	nowFunc.Store(func() time.Time { return defaultNow() })
-}
-
-// Now returns current time in Local timezone
+// Now returns current time in UTC.
 func Now() time.Time {
-	f := nowFunc.Load().(func() time.Time)
-	return f()
+	return time.Unix(0, currentTime.Load()).UTC()
 }
 
 // UnixNano returns the current unix timestamp in nanoseconds.
-//
-// It is faster than time.Now().UnixNano()
+// It is faster than time.Now().UnixNano().
 func UnixNano() int64 {
-	f := nowFunc.Load().(func() time.Time)
-	return f().UnixNano()
+	return currentTime.Load()
 }
 
 // UnixTime returns the current unix timestamp in seconds.
-//
-// The timestamp is calculated by dividing unix timestamp in nanoseconds by 1e9
 func UnixTime() int64 {
-	return UnixNano() / 1e9
+	return currentTime.Load() / 1e9
 }
 
 // UnixDate returns date from the current unix timestamp.
-//
-// The date is calculated by dividing unix timestamp by (24*3600)
 func UnixDate() int64 {
-	return UnixTime() / (24 * 3600)
+	return UnixTime() / SecondsPerDay
 }
 
 // UnixHour returns hour from the current unix timestamp.
-//
-// The hour is calculated by dividing unix timestamp by 3600
 func UnixHour() int64 {
-	return UnixTime() / 3600
+	return UnixTime() / SecondsPerHour
 }
 
 // Since returns the time elapsed since t.
-// It is shorthand for time.Now().Sub(t).
+// It is shorthand for time.Now().Sub(t) but uses the cached time.
+//
+// Note: If t is in the future, this will return a negative duration.
+// For past times, the result may be up to UpdateInterval ahead of the actual elapsed time.
 func Since(t time.Time) time.Duration {
-	return time.Duration(UnixNano() - t.UnixNano())
+	return time.Duration(currentTime.Load() - t.UnixNano())
 }
 
 // Until returns the duration until t.
-// It is shorthand for t.Sub(time.Now()).
+// It is shorthand for t.Sub(time.Now()) but uses the cached time.
+//
+// Note: If t is in the past, this will return a negative duration.
+// For future times, the result may be up to UpdateInterval less than the actual remaining time.
 func Until(t time.Time) time.Duration {
-	// Use unix-nano arithmetic to avoid mixing underlying Now implementations
-	return time.Duration(t.UnixNano() - UnixNano())
+	return time.Duration(t.UnixNano() - currentTime.Load())
 }

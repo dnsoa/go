@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestUnixDate(t *testing.T) {
-	dateExpected := time.Now().Unix() / (24 * 3600)
+	dateExpected := time.Now().Unix() / SecondsPerDay
 	date := UnixDate()
 	diff := date - dateExpected
 	if diff < 0 {
@@ -24,7 +25,7 @@ func TestUnixDate(t *testing.T) {
 }
 
 func TestUnixHour(t *testing.T) {
-	hourExpected := time.Now().Unix() / 3600
+	hourExpected := time.Now().Unix() / SecondsPerHour
 	hour := UnixHour()
 	diff := hour - hourExpected
 	if diff < 0 {
@@ -49,9 +50,9 @@ func TestUnixTime(t *testing.T) {
 
 	time.Sleep(time.Second)
 	diff := time.Since(Now())
-	// 使用基于包内 updateInterval 的动态容差，避免固定 100ms 导致在较大更新间隔时失败
-	allowed := updateInterval + 100*time.Millisecond
-	if diff > allowed { // 动态容差
+	// Use the default update interval for tolerance
+	allowed := DefaultUpdateInterval + 100*time.Millisecond
+	if diff > allowed {
 		t.Errorf("time is not correct %v (allowed %v)", diff, allowed)
 	}
 	for range 5 {
@@ -64,12 +65,12 @@ func TestUnixTime(t *testing.T) {
 		if d > 1 {
 			t.Errorf("Unix() and Now().Unix() differ by %d seconds", d)
 		}
-		dateDiff := UnixDate() - time.Now().Unix()/86400
+		dateDiff := UnixDate() - time.Now().Unix()/SecondsPerDay
 		if dateDiff < 0 {
 			dateDiff = -dateDiff
 		}
 		if dateDiff > 1 {
-			t.Errorf("UnixDate() and Now().Unix()/86400 differ by %d days", dateDiff)
+			t.Errorf("UnixDate() and Now().Unix()/SecondsPerDay differ by %d days", dateDiff)
 		}
 		secDiff := time.Now().Unix() - UnixTime()
 		if secDiff < 0 {
@@ -98,6 +99,27 @@ func TestUntil(t *testing.T) {
 	}
 }
 
+func TestConcurrentAccess(t *testing.T) {
+	var wg sync.WaitGroup
+	const goroutines = 100
+	const opsPerGoroutine = 1000
+
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < opsPerGoroutine; j++ {
+				_ = UnixNano()
+				_ = UnixTime()
+				_ = Now()
+				_ = UnixDate()
+				_ = UnixHour()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func BenchmarkUnixTimestamp(b *testing.B) {
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
@@ -120,48 +142,97 @@ func BenchmarkTimeNowUnix(b *testing.B) {
 	})
 }
 
-var _currentTime atomic.Int64
+func BenchmarkFastTimeNow(b *testing.B) {
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		var sum int64
+		for pb.Next() {
+			sum += Now().UnixNano()
+		}
+		Sink.Store(uint64(sum))
+	})
+}
 
-func startTicker(interval time.Duration) func() {
-	done := make(chan struct{})
+func BenchmarkTimeNow(b *testing.B) {
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		var sum int64
+		for pb.Next() {
+			sum += time.Now().UnixNano()
+		}
+		Sink.Store(uint64(sum))
+	})
+}
+
+func BenchmarkUnixNano(b *testing.B) {
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		var sum int64
+		for pb.Next() {
+			sum += UnixNano()
+		}
+		Sink.Store(uint64(sum))
+	})
+}
+
+// testTicker is a helper for benchmark testing that simulates additional
+// background updaters by writing into package-level currentTime. This makes
+// the benchmark more realistic by increasing contention on the shared atomic
+// variable used by the package.
+type testTicker struct {
+	stopCh chan struct{}
+	wg     sync.WaitGroup
+}
+
+func startTestTicker(interval time.Duration) *testTicker {
+	tt := &testTicker{
+		stopCh: make(chan struct{}),
+	}
+	tt.wg.Add(1)
 	go func() {
+		defer tt.wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case tm := <-ticker.C:
-				_currentTime.Store(tm.UnixNano())
-			case <-done:
+				currentTime.Store(tm.UnixNano())
+			case <-tt.stopCh:
 				return
 			}
 		}
 	}()
-	return func() { close(done) }
+	return tt
+}
+
+func (tt *testTicker) stop() {
+	close(tt.stopCh)
+	tt.wg.Wait()
 }
 
 func BenchmarkHighPrecision(b *testing.B) {
 	os.Setenv("FASTTIME_HIGH_PRECISION", "true")
 	defer os.Unsetenv("FASTTIME_HIGH_PRECISION")
 
-	// 预热
+	// Warmup
 	runtime.GC()
 	b.ResetTimer()
 
-	// 测试不同并发度下的影响
+	// Test with different worker counts
 	for _, workers := range []int{1, 4, 8} {
 		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
-			var stopFuncs []func()
+			interval := HighPrecisionUpdateInterval
+			var tickers []*testTicker
 			for i := 0; i < workers; i++ {
-				stop := startTicker(updateInterval)
-				stopFuncs = append(stopFuncs, stop)
+				tickers = append(tickers, startTestTicker(interval))
 			}
 			defer func() {
-				for _, stop := range stopFuncs {
-					stop()
+				for _, tt := range tickers {
+					tt.stop()
 				}
 			}()
 
-			// 测量CPU和内存
+			// Measure CPU and memory
 			var memStatsStart, memStatsEnd runtime.MemStats
 			var cpuStart, cpuEnd uint64
 
@@ -171,8 +242,8 @@ func BenchmarkHighPrecision(b *testing.B) {
 
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					// 模拟实际工作负载
-					_ = currentTime.Load()
+					// Simulate actual workload using public API
+					_ = UnixNano()
 					time.Sleep(10 * time.Microsecond)
 				}
 			})
@@ -180,9 +251,9 @@ func BenchmarkHighPrecision(b *testing.B) {
 			cpuEnd = getCPUTime()
 			runtime.ReadMemStats(&memStatsEnd)
 
-			// 计算指标
+			// Calculate metrics
 			duration := time.Since(start).Seconds()
-			cpuUsage := float64(cpuEnd-cpuStart) / (duration * 1e9) * 100 // CPU利用率百分比
+			cpuUsage := float64(cpuEnd-cpuStart) / (duration * 1e9) * 100
 			memAlloc := memStatsEnd.TotalAlloc - memStatsStart.TotalAlloc
 
 			b.ReportMetric(cpuUsage, "CPU%")
@@ -191,20 +262,17 @@ func BenchmarkHighPrecision(b *testing.B) {
 	}
 }
 
-// 获取进程累计CPU时间（Linux/Mac兼容）
+// getCPUTime returns the process cumulative CPU time (Linux/Mac compatible).
 func getCPUTime() uint64 {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		return 0
 	}
-	var cpuTime uint64
 	var rusage syscall.Rusage
 	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &rusage); err == nil {
-		cpuTime = uint64(rusage.Utime.Sec)*1e9 + uint64(rusage.Utime.Usec)*1e3
-	} else {
-		cpuTime = 0
+		return uint64(rusage.Utime.Sec)*1e9 + uint64(rusage.Utime.Usec)*1e3
 	}
-	return cpuTime
+	return 0
 }
 
-// Sink should prevent from code elimination by optimizing compiler
+// Sink prevents compiler from optimizing away benchmark code.
 var Sink atomic.Uint64
