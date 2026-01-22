@@ -74,6 +74,9 @@ func ScanContext(ctx context.Context, queryer Queryer, dest any, query string, a
 		}
 		defer rows.Close()
 		if !rows.Next() {
+			if err := rows.Err(); err != nil {
+				return err
+			}
 			return sql.ErrNoRows
 		}
 		columns, err := rows.Columns()
@@ -82,6 +85,10 @@ func ScanContext(ctx context.Context, queryer Queryer, dest any, query string, a
 		}
 		destElem := value.Elem()
 		scanArgs := make([]any, len(columns))
+		discard := make([]any, len(columns))
+		for i := range columns {
+			scanArgs[i] = &discard[i]
+		}
 		for _, field := range fields(destElem.Type()) {
 			if columnIndex := slices.Index(columns, field.name); columnIndex >= 0 {
 				scanArgs[columnIndex] = destElem.FieldByIndex(field.field.Index).Addr().Interface()
@@ -92,6 +99,7 @@ func ScanContext(ctx context.Context, queryer Queryer, dest any, query string, a
 		if err != nil {
 			return err
 		}
+		return rows.Err()
 	case reflect.Slice:
 		rows, err := queryer.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -122,17 +130,18 @@ func ScanContext(ctx context.Context, queryer Queryer, dest any, query string, a
 				}
 				direct.Set(reflect.Append(direct, reflect.Indirect(vp)))
 			}
-			return nil
+			return rows.Err()
 		}
 		if base.Kind() != reflect.Struct {
 			return fmt.Errorf("must pass a pointer to a slice of structs, not %s", base.Kind())
 		}
-		isPtr := slice.Elem().Kind() == reflect.Ptr
+		isPtr := slice.Elem().Kind() == reflect.Pointer
 		columns, err := rows.Columns()
 		if err != nil {
 			return err
 		}
 		scanArgs := make([]any, len(columns))
+		discard := make([]any, len(columns))
 		fieldMap := make(map[int][]int)
 
 		// 预先计算字段索引
@@ -143,6 +152,9 @@ func ScanContext(ctx context.Context, queryer Queryer, dest any, query string, a
 		}
 		for rows.Next() {
 			vp = reflect.New(base)
+			for i := range columns {
+				scanArgs[i] = &discard[i]
+			}
 			for columnIndex, fieldIndex := range fieldMap {
 				scanArgs[columnIndex] = vp.Elem().FieldByIndex(fieldIndex).Addr().Interface()
 			}
@@ -157,12 +169,11 @@ func ScanContext(ctx context.Context, queryer Queryer, dest any, query string, a
 				direct.Set(reflect.Append(direct, reflect.Indirect(vp)))
 			}
 		}
+		return rows.Err()
 	default:
 		row := queryer.QueryRowContext(ctx, query, args...)
 		return row.Scan(dest)
 	}
-
-	return nil
 }
 
 func tagLookup(tag reflect.StructTag) string {
@@ -199,115 +210,113 @@ func fixQuery(flavor Flavor, query string) string {
 func FormatSQL(query string, args []any) string {
 	builder := acquireStringBuilder()
 	defer releaseStringBuilder(builder)
-	nArgs := len(args)
-	if nArgs == 0 {
+	if len(args) == 0 {
 		return query
 	}
-	var i, j int
-	for i = strings.IndexRune(query, '?'); i != -1; i = strings.IndexRune(query, '?') {
-		builder.WriteString(query[:i])
-		switch a := args[j].(type) {
-		// case *int64:
-		// 	val := args[i]
-		// 	if val.(*int64) != nil {
-		// 		builder.WriteString(fmt.Sprintf("%d", *val.(*int64)))
-		// 	} else {
-		// 		builder.WriteString("NULL")
-		// 	}
-		// case *int:
-		// 	val := args[i]
-		// 	if val.(*int) != nil {
-		// 		builder.WriteString(fmt.Sprintf("%d", *val.(*int)))
-		// 	} else {
-		// 		builder.WriteString("NULL")
-		// 	}
-		case *float64, *float32:
-			val := args[i]
-			if val.(*float64) != nil {
-				fmt.Fprintf(builder, "%f", *val.(*float64))
-			} else {
-				builder.WriteString("NULL")
-			}
-		case *bool:
-			val := args[i]
-			if val.(*bool) != nil {
-				fmt.Fprintf(builder, "%t", *val.(*bool))
-			} else {
-				builder.WriteString("NULL")
-			}
-		case *string:
-			val := args[i]
-			if val.(*string) != nil {
-				fmt.Fprintf(builder, "'%q'", *val.(*string))
-			} else {
-				builder.WriteString("NULL")
-			}
-		case *time.Time:
-			val := args[i]
-			if val.(*time.Time) != nil {
-				time := *val.(*time.Time)
-				fmt.Fprintf(builder, "'%v'", time.Format("2006-01-02 15:04:05"))
-			} else {
-				builder.WriteString("NULL")
-			}
-		case int, int8, int16, int32, int64,
-			uint, uint8, uint16, uint32, uint64:
-			fmt.Fprintf(builder, "%d", a)
-		case float64:
-			fmt.Fprintf(builder, "%f", a)
-		case bool:
-			fmt.Fprintf(builder, "%t", a)
-		case time.Time:
-			fmt.Fprintf(builder, "'%v'", a.Format("2006-01-02 15:04:05"))
-		case sql.NullBool:
-			if a.Valid {
-				fmt.Fprintf(builder, "%t", a.Bool)
-			} else {
-				builder.WriteString("NULL")
-			}
-		case sql.NullInt64:
-			if a.Valid {
-				fmt.Fprintf(builder, "%d", a.Int64)
-			} else {
-				builder.WriteString("NULL")
-			}
-		case sql.NullString:
-			if a.Valid {
-				fmt.Fprintf(builder, "%q", a.String)
-			} else {
-				builder.WriteString("NULL")
-			}
-		case sql.NullFloat64:
-			if a.Valid {
-				fmt.Fprintf(builder, "%f", a.Float64)
-			} else {
-				builder.WriteString("NULL")
-			}
-		case *int, *int8, *int16, *int32, *int64,
-			*uint, *uint8, *uint16, *uint32, *uint64:
-			val := args[i]
-			if val.(*int) != nil {
-				builder.WriteString(fmt.Sprintf("%d", *val.(*int)))
-			} else {
-				builder.WriteString("NULL")
-			}
-		case string:
-			fmt.Fprintf(builder, "'%q'", a)
-		case nil:
-			builder.WriteString("NULL")
-		default:
-			fmt.Fprintf(builder, "'%v'", a)
+	argIndex := 0
+	for {
+		pos := strings.IndexByte(query, '?')
+		if pos < 0 {
+			builder.WriteString(query)
+			break
 		}
-		query = query[i+1:]
-		j++
+		builder.WriteString(query[:pos])
+		if argIndex < len(args) {
+			builder.WriteString(formatSQLArg(args[argIndex]))
+		} else {
+			builder.WriteByte('?')
+		}
+		argIndex++
+		query = query[pos+1:]
 	}
-	builder.WriteString(query)
 	return builder.String()
+}
+
+func formatSQLArg(arg any) string {
+	if arg == nil {
+		return "NULL"
+	}
+	rv := reflect.ValueOf(arg)
+	for rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return "NULL"
+		}
+		rv = rv.Elem()
+		arg = rv.Interface()
+	}
+
+	switch v := arg.(type) {
+	case time.Time:
+		return "'" + v.Format("2006-01-02 15:04:05") + "'"
+	case sql.NullBool:
+		if !v.Valid {
+			return "NULL"
+		}
+		if v.Bool {
+			return "TRUE"
+		}
+		return "FALSE"
+	case sql.NullInt64:
+		if !v.Valid {
+			return "NULL"
+		}
+		return strconv.FormatInt(v.Int64, 10)
+	case sql.NullFloat64:
+		if !v.Valid {
+			return "NULL"
+		}
+		return strconv.FormatFloat(v.Float64, 'f', -1, 64)
+	case sql.NullString:
+		if !v.Valid {
+			return "NULL"
+		}
+		return quoteSQLString(v.String)
+	case string:
+		return quoteSQLString(v)
+	case []byte:
+		return quoteSQLString(string(v))
+	case bool:
+		if v {
+			return "TRUE"
+		}
+		return "FALSE"
+	case int:
+		return strconv.FormatInt(int64(v), 10)
+	case int8:
+		return strconv.FormatInt(int64(v), 10)
+	case int16:
+		return strconv.FormatInt(int64(v), 10)
+	case int32:
+		return strconv.FormatInt(int64(v), 10)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case uint:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint64:
+		return strconv.FormatUint(v, 10)
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	default:
+		return quoteSQLString(fmt.Sprint(arg))
+	}
+}
+
+func quoteSQLString(s string) string {
+	// Debug formatting only; escapes single quotes to keep output readable.
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // Deref is Indirect for reflect.Types
 func deref(t reflect.Type) reflect.Type {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	return t

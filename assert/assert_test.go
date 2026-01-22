@@ -201,3 +201,35 @@ func TestErrorAs(t *testing.T) {
 	assert.ErrorAs(t, err2, &err1)
 	assert.ErrorAs(fail(t), nil, &err1, "assert.ErrorAs", "some error")
 }
+
+func TestContainsSliceOfSlicesNoPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("unexpected panic: %v", r)
+		}
+	}()
+
+	assert.Contains(t, [][]int{{1, 2}, {3, 4}}, []int{1, 2})
+	assert.NotContains(t, [][]int{{1, 2}, {3, 4}}, []int{2, 3})
+}
+
+func TestContainsArrayNoPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("unexpected panic: %v", r)
+		}
+	}()
+
+	assert.Contains(t, [3]int{1, 2, 3}, 2)
+	assert.NotContains(t, [3]int{1, 2, 3}, 4)
+}
+
+func TestFailMessageArgsNonStringFormatNoPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("unexpected panic: %v", r)
+		}
+	}()
+
+	assert.Fail(fail(t), "boom", 123, "abc")
+}

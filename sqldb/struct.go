@@ -1,6 +1,7 @@
 package sqldb
 
 import (
+	"maps"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -47,9 +48,7 @@ func fields(t reflect.Type) []field {
 		fields = appendFields(nil, t, nil)
 
 		newCache := make(map[reflect.Type][]field, len(cache)+1)
-		for k, v := range cache {
-			newCache[k] = v
-		}
+		maps.Copy(newCache, cache)
 		newCache[t] = fields
 		cachedFields.Store(newCache)
 	}

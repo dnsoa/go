@@ -101,7 +101,7 @@ func (a *Assertions) Error(err error, msgAndArgs ...any) {
 	Error(a.t, err, msgAndArgs...)
 }
 
-// NotErrorIs asserts that none of the errors in err's chain matches target.
+// ErrorIs asserts that none of the errors in err's chain matches target.
 // This is a wrapper for errors.Is.
 func (a *Assertions) ErrorIs(err error, target error, msgAndArgs ...any) {
 	if h, ok := a.t.(tHelper); ok {

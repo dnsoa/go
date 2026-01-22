@@ -90,26 +90,31 @@ func NotContains(t TestingT, a any, b any, msgAndArgs ...any) {
 // contains returns whether container contains the given the element.
 // It works with strings, maps and slices.
 func contains(container any, element any) bool {
+	if container == nil {
+		return false
+	}
 	containerValue := reflect.ValueOf(container)
 
 	switch containerValue.Kind() {
 	case reflect.String:
-		elementValue := reflect.ValueOf(element)
-		return strings.Contains(containerValue.String(), elementValue.String())
+		return strings.Contains(containerValue.String(), fmt.Sprint(element))
 
 	case reflect.Map:
 		keys := containerValue.MapKeys()
 
 		for _, key := range keys {
-			if key.Interface() == element {
+			if reflect.DeepEqual(key.Interface(), element) {
 				return true
 			}
 		}
 
-	case reflect.Slice:
+	case reflect.Slice, reflect.Array:
 		elementValue := reflect.ValueOf(element)
+		if !elementValue.IsValid() {
+			return false
+		}
 
-		if elementValue.Kind() == reflect.Slice {
+		if elementValue.Kind() == reflect.Slice || elementValue.Kind() == reflect.Array {
 			elementLength := elementValue.Len()
 
 			if elementLength == 0 {
@@ -120,25 +125,28 @@ func contains(container any, element any) bool {
 				return false
 			}
 
-			matchingElements := 0
+			containerElemKind := containerValue.Type().Elem().Kind()
+			if containerElemKind != reflect.Slice && containerElemKind != reflect.Array && containerElemKind != reflect.Map && containerElemKind != reflect.Func {
+				matchingElements := 0
 
-			for i := 0; i < containerValue.Len(); i++ {
-				if containerValue.Index(i).Interface() == elementValue.Index(matchingElements).Interface() {
-					matchingElements++
-				} else {
-					matchingElements = 0
+				for i := 0; i < containerValue.Len(); i++ {
+					if reflect.DeepEqual(containerValue.Index(i).Interface(), elementValue.Index(matchingElements).Interface()) {
+						matchingElements++
+					} else {
+						matchingElements = 0
+					}
+
+					if matchingElements == elementLength {
+						return true
+					}
 				}
 
-				if matchingElements == elementLength {
-					return true
-				}
+				return false
 			}
-
-			return false
 		}
 
 		for i := 0; i < containerValue.Len(); i++ {
-			if containerValue.Index(i).Interface() == element {
+			if reflect.DeepEqual(containerValue.Index(i).Interface(), element) {
 				return true
 			}
 		}
@@ -244,7 +252,7 @@ func isEmpty(object any) bool {
 	case reflect.Chan, reflect.Map, reflect.Slice:
 		return objValue.Len() == 0
 	// pointers are empty if nil or if the value they point to is empty
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if objValue.IsNil() {
 			return true
 		}
@@ -297,7 +305,7 @@ func NoError(t TestingT, err error, msgAndArgs ...any) {
 	}
 }
 
-// NotErrorIs asserts that none of the errors in err's chain matches target.
+// ErrorIs asserts that at least one of the errors in err's chain matches expected.
 // This is a wrapper for errors.Is.
 func ErrorIs(t TestingT, err error, expected error, msgAndArgs ...any) {
 	if h, ok := t.(tHelper); ok {
@@ -427,7 +435,10 @@ func messageFromMsgAndArgs(msgAndArgs ...any) string {
 		return fmt.Sprintf("%+v", msg)
 	}
 	if len(msgAndArgs) > 1 {
-		return fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
+		if format, ok := msgAndArgs[0].(string); ok {
+			return fmt.Sprintf(format, msgAndArgs[1:]...)
+		}
+		return fmt.Sprint(msgAndArgs...)
 	}
 	return ""
 }

@@ -102,6 +102,11 @@ func NewSqlDB(db *sql.DB, flavor Flavor, opts ...Option) *DB {
 	return sqlDB
 }
 
+// NewSQLDB is an alias of NewSqlDB.
+func NewSQLDB(db *sql.DB, flavor Flavor, opts ...Option) *DB {
+	return NewSqlDB(db, flavor, opts...)
+}
+
 func (db *DB) Begin() (*Tx, error) {
 	return db.BeginTx(context.Background(), nil)
 }
@@ -231,4 +236,14 @@ func (db *DB) Prepare(query string) (*sql.Stmt, error) {
 func (db *DB) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
 	query = fixQuery(db.Flavor, query)
 	return db.DB.PrepareContext(ctx, query)
+}
+
+// Table starts a new query builder for the given table.
+//
+// NOTE: This intentionally returns a fresh builder to avoid shared mutable state
+// on DB when chaining builder methods.
+func (db *DB) Table(table string) *builder {
+	b := newBuilder(db.Flavor, db)
+	b.table = table
+	return b
 }

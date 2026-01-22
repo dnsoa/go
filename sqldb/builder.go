@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -42,7 +43,11 @@ func (b *builder) Select(columns ...string) *builder {
 }
 
 func (b *builder) Where(column, operator string, value any) *builder {
-	return b.buildWhere("", column, operator, value)
+	prefix := ""
+	if len(b.whereBindings) > 0 {
+		prefix = "AND"
+	}
+	return b.buildWhere(prefix, column, operator, value)
 }
 
 func (b *builder) Count() (int, error) {
@@ -60,6 +65,7 @@ func (b *builder) buildWhere(prefix, operand, operator string, val any) *builder
 	if prefix != "" {
 		prefix = " " + prefix + " "
 	}
+	operand = b.flavor.columnQuote(operand)
 	b.whereBindings = append(b.whereBindings, map[string]any{prefix + operand + " " + operator: val})
 	return b
 }
@@ -84,40 +90,48 @@ func (b *builder) Limit(limit int64) *builder {
 	return b
 }
 
-func (r *builder) buildSelect() string {
-	query := `SELECT ` + strings.Join(r.columns, `, `) + ` FROM ` + r.table + ``
+func (b *builder) buildSelect() string {
+	cols := make([]string, 0, len(b.columns))
+	for _, c := range b.columns {
+		if c == "*" {
+			cols = append(cols, "*")
+			continue
+		}
+		cols = append(cols, b.flavor.columnQuote(c))
+	}
+	query := `SELECT ` + strings.Join(cols, `, `) + ` FROM ` + b.flavor.tableQuote("", b.table) + ``
 
-	return query + r.buildClauses()
+	return query + b.buildClauses()
 }
 
 // builds query string clauses
-func (r *builder) buildClauses() string {
+func (b *builder) buildClauses() string {
 	clauses := ""
-	// for _, j := range r.join {
+	// for _, j := range b.join {
 	// 	clauses += j
 	// }
 
 	// build where clause
-	if len(r.whereBindings) > 0 {
-		clauses += composeWhere(r.whereBindings, r.startBindingsAt)
+	if len(b.whereBindings) > 0 {
+		clauses += composeWhere(b.whereBindings, b.startBindingsAt)
 	}
 
-	if r.groupBy != "" {
-		clauses += " GROUP BY " + r.groupBy
+	if b.groupBy != "" {
+		clauses += " GROUP BY " + b.groupBy
 	}
 
 	// if r.having != "" {
 	// 	clauses += " HAVING " + r.having
 	// }
 
-	clauses += composeOrderBy(r.orderBy)
+	clauses += composeOrderBy(b.orderBy)
 
-	if r.limit > 0 {
-		clauses += " LIMIT " + strconv.FormatInt(r.limit, 10)
+	if b.limit > 0 {
+		clauses += " LIMIT " + strconv.FormatInt(b.limit, 10)
 	}
 
-	if r.offset > 0 {
-		clauses += " OFFSET " + strconv.FormatInt(r.offset, 10)
+	if b.offset > 0 {
+		clauses += " OFFSET " + strconv.FormatInt(b.offset, 10)
 	}
 
 	return clauses
@@ -126,7 +140,6 @@ func (r *builder) buildClauses() string {
 // composes WHERE clause string for particular query stmt
 func composeWhere(whereBindings []map[string]any, startedAt int) string {
 	where := " WHERE "
-	i := startedAt
 	for _, m := range whereBindings {
 		for k, v := range m {
 			// operand >= $i
@@ -141,7 +154,6 @@ func composeWhere(whereBindings []map[string]any, startedAt int) string {
 				// }
 
 				where += k + " ?"
-				i++
 			}
 		}
 	}
@@ -179,13 +191,13 @@ func prepareValue(value any) []any {
 	case string:
 		values = append(values, v)
 	case int:
-		values = append(values, strconv.FormatInt(int64(v), 10))
+		values = append(values, v)
 	case float64:
-		values = append(values, fmt.Sprintf("%g", v))
+		values = append(values, v)
 	case int64:
-		values = append(values, strconv.FormatInt(v, 10))
+		values = append(values, v)
 	case uint64:
-		values = append(values, strconv.FormatUint(v, 10))
+		values = append(values, v)
 	case []any:
 		for _, vi := range v {
 			values = append(values, prepareValue(vi)...)
@@ -231,6 +243,10 @@ func (b *builder) Insert(data any) (sql.Result, error) {
 }
 
 func (b *builder) insertAny(data any) (sql.Result, error) {
+	rv := reflect.ValueOf(data)
+	if rv.Kind() == reflect.Slice && rv.Len() == 0 {
+		return nil, fmt.Errorf("empty slice")
+	}
 	ins := &inserter{
 		Table: b.table,
 		Data:  data,
@@ -240,7 +256,10 @@ func (b *builder) insertAny(data any) (sql.Result, error) {
 
 func (b *builder) insertMap(data map[string]any) (sql.Result, error) {
 	columns, values, bindings := prepareBindings(data)
-	query := `INSERT INTO ` + b.table + ` (` + strings.Join(columns, ", ") + `) VALUES (` + strings.Join(bindings, ", ") + `)`
+	for i := range columns {
+		columns[i] = b.flavor.columnQuote(columns[i])
+	}
+	query := `INSERT INTO ` + b.flavor.tableQuote("", b.table) + ` (` + strings.Join(columns, ", ") + `) VALUES (` + strings.Join(bindings, ", ") + `)`
 	return b.db.Exec(query, values...)
 }
 
@@ -258,6 +277,9 @@ func (b *builder) updateMap(data map[string]any) (sql.Result, error) {
 	dataLen := len(data)
 	if dataLen == 0 {
 		return nil, fmt.Errorf("no data to update")
+	}
+	if len(b.whereBindings) == 0 {
+		return nil, fmt.Errorf("missing WHERE clause")
 	}
 	fields := make([]string, 0, dataLen)
 	values := make([]any, 0, dataLen)

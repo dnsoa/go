@@ -4,6 +4,7 @@ package sqldb
 import (
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // TokenType represents a type of token in a SQL INSERT statement, whether column or value expression.
@@ -40,21 +41,41 @@ func tokenize(recordType reflect.Type, tokenType TokenType) string {
 	b := acquireStringBuilder()
 	defer releaseStringBuilder(b)
 	b.WriteString(`(`)
+	first := true
+	ordinal := 0
 	for i := 0; i < recordType.NumField(); i++ {
+		f := recordType.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		ordinal++
+		if !first {
+			b.WriteString(`,`)
+		}
+		first = false
 		switch tokenType {
 		case ColumnNameTokenType:
-			b.WriteString(tagLookup(recordType.Field(i).Tag))
+			name := tagLookup(f.Tag)
+			if name == "" {
+				name = strings.ToLower(f.Name)
+			}
+			b.WriteString(name)
 		case QuestionMarkTokenType:
 			_, _ = fmt.Fprint(b, `?`)
 		case AtColumnNameTokenType:
-			_, _ = fmt.Fprintf(b, `@%s`, tagLookup(recordType.Field(i).Tag))
+			name := tagLookup(f.Tag)
+			if name == "" {
+				name = strings.ToLower(f.Name)
+			}
+			_, _ = fmt.Fprintf(b, `@%s`, name)
 		case OrdinalNumberTokenType:
-			_, _ = fmt.Fprintf(b, `$%d`, i+1)
+			_, _ = fmt.Fprintf(b, `$%d`, ordinal)
 		case ColonTokenType:
-			_, _ = fmt.Fprintf(b, `:%s`, tagLookup(recordType.Field(i).Tag))
-		}
-		if i < recordType.NumField()-1 {
-			b.WriteString(`,`)
+			name := tagLookup(f.Tag)
+			if name == "" {
+				name = strings.ToLower(f.Name)
+			}
+			_, _ = fmt.Fprintf(b, `:%s`, name)
 		}
 	}
 	b.WriteString(`)`)
@@ -132,14 +153,23 @@ func (ins *inserter) Args() []any {
 	)
 	data = reflect.ValueOf(ins.Data)
 	if data.Kind() == reflect.Slice { // Multi row INSERT: inserter.Data is a slice-of-struct-pointer or slice-of-struct
+		if data.Len() == 0 {
+			return nil
+		}
 		argIndex := -1
 		if data.Index(0).Kind() == reflect.Pointer { // First slice element is struct pointers
 			recType = data.Index(0).Elem().Type()
 		} else { // First slice element is struct
 			recType = data.Index(0).Type()
 		}
+		fieldIndexes := make([]int, 0, recType.NumField())
+		for i := 0; i < recType.NumField(); i++ {
+			if recType.Field(i).IsExported() {
+				fieldIndexes = append(fieldIndexes, i)
+			}
+		}
 		numRecs := data.Len()
-		numFieldsPerRec := recType.NumField()
+		numFieldsPerRec := len(fieldIndexes)
 		numBindArgs := numRecs * numFieldsPerRec
 		args = make([]any, numBindArgs)
 		for rowIndex := range data.Len() {
@@ -148,7 +178,7 @@ func (ins *inserter) Args() []any {
 			} else {
 				rec = data.Index(rowIndex) // Cur slice elem is struct, can get arg val directly
 			}
-			for fieldIndex := 0; fieldIndex < numFieldsPerRec; fieldIndex++ {
+			for _, fieldIndex := range fieldIndexes {
 				argIndex += 1
 				args[argIndex] = rec.Field(fieldIndex).Interface()
 			}
@@ -162,9 +192,15 @@ func (ins *inserter) Args() []any {
 			recType = data.Type()
 			rec = data
 		}
-		args = make([]any, recType.NumField())
+		fieldIndexes := make([]int, 0, recType.NumField())
 		for i := 0; i < recType.NumField(); i++ {
-			args[i] = rec.Field(i).Interface()
+			if recType.Field(i).IsExported() {
+				fieldIndexes = append(fieldIndexes, i)
+			}
+		}
+		args = make([]any, 0, len(fieldIndexes))
+		for _, i := range fieldIndexes {
+			args = append(args, rec.Field(i).Interface())
 		}
 		return args
 	}

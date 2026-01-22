@@ -65,6 +65,9 @@ func (f Flavor) columnQuote(column string) string {
 	default:
 		columnQuote = "`"
 	}
+	if column == "*" {
+		return "*"
+	}
 	if strings.ContainsRune(column, '.') {
 		if strings.ContainsRune(column, '*') {
 			return columnQuote + strings.ReplaceAll(column, ".", columnQuote+".")
