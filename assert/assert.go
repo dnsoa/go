@@ -18,31 +18,94 @@ type TestingT interface {
 	FailNow()
 }
 
-// Equal asserts that the two parameters are equal.
-func Equal[T comparable](t TestingT, expected T, actual T, msgAndArgs ...any) {
-	if objectsAreEqual(expected, actual) {
+// Equal asserts that expected == actual using Go's built-in equality rules.
+//
+// If the values are of different dynamic types, they are treated as not equal.
+// If the values are of the same dynamic type but that type is not comparable (e.g. slices, maps, funcs), Equal fails
+// with a message suggesting DeepEqual.
+func Equal(t TestingT, expected any, actual any, msgAndArgs ...any) {
+	if expected == nil || actual == nil {
+		if expected == actual {
+			return
+		}
+		if h, ok := t.(tHelper); ok {
+			h.Helper()
+		}
+		Fail(t, fmt.Sprintf("Not equal:\nexpected: %#v\nactual  : %#v", expected, actual), msgAndArgs...)
+		t.FailNow()
+		return
+	}
+
+	tExpected := reflect.TypeOf(expected)
+	tActual := reflect.TypeOf(actual)
+	if tExpected != tActual {
+		if h, ok := t.(tHelper); ok {
+			h.Helper()
+		}
+		Fail(t, fmt.Sprintf("Not equal (different types):\nexpected (%s): %#v\nactual   (%s): %#v", tExpected, expected, tActual, actual), msgAndArgs...)
+		t.FailNow()
+		return
+	}
+
+	if !tExpected.Comparable() {
+		if h, ok := t.(tHelper); ok {
+			h.Helper()
+		}
+		Fail(t, fmt.Sprintf("Values of type %s are not comparable; use DeepEqual instead.\nexpected: %#v\nactual  : %#v", tExpected, expected, actual), msgAndArgs...)
+		t.FailNow()
+		return
+	}
+
+	if expected == actual {
 		return
 	}
 	if h, ok := t.(tHelper); ok {
 		h.Helper()
 	}
-
-	Fail(t, fmt.Sprintf("Not equal: \n"+
-		"expected: %v\n"+
-		"actual  : %v", expected, actual), msgAndArgs...)
+	Fail(t, fmt.Sprintf("Not equal:\nexpected: %#v\nactual  : %#v", expected, actual), msgAndArgs...)
 	t.FailNow()
 }
 
-// NotEqual asserts that the two parameters are not equal.
-func NotEqual[T comparable](t TestingT, expected T, actual T, msgAndArgs ...any) {
-	if !objectsAreEqual(expected, actual) {
+// NotEqual asserts that expected != actual using Go's built-in inequality rules.
+//
+// If the values are of different dynamic types, they are treated as not equal.
+// If the values are of the same dynamic type but that type is not comparable (e.g. slices, maps, funcs), NotEqual fails
+// with a message suggesting DeepEqual.
+func NotEqual(t TestingT, expected any, actual any, msgAndArgs ...any) {
+	if expected == nil || actual == nil {
+		if expected != actual {
+			return
+		}
+		if h, ok := t.(tHelper); ok {
+			h.Helper()
+		}
+		Fail(t, fmt.Sprintf("Should not be equal: %#v", actual), msgAndArgs...)
+		t.FailNow()
+		return
+	}
+
+	tExpected := reflect.TypeOf(expected)
+	tActual := reflect.TypeOf(actual)
+	if tExpected != tActual {
+		return
+	}
+
+	if !tExpected.Comparable() {
+		if h, ok := t.(tHelper); ok {
+			h.Helper()
+		}
+		Fail(t, fmt.Sprintf("Values of type %s are not comparable; use DeepEqual instead.\nexpected: %#v\nactual  : %#v", tExpected, expected, actual), msgAndArgs...)
+		t.FailNow()
+		return
+	}
+
+	if expected != actual {
 		return
 	}
 	if h, ok := t.(tHelper); ok {
 		h.Helper()
 	}
-
-	Fail(t, fmt.Sprintf("Should not be: %#v\n", actual), msgAndArgs...)
+	Fail(t, fmt.Sprintf("Should not be: %#v", actual), msgAndArgs...)
 	t.FailNow()
 }
 
@@ -538,24 +601,4 @@ func isTest(name, prefix string) bool {
 	}
 	r, _ := utf8.DecodeRuneInString(name[len(prefix):])
 	return !unicode.IsLower(r)
-}
-
-func objectsAreEqual(expected, actual any) bool {
-	if expected == nil || actual == nil {
-		return expected == actual
-	}
-
-	exp, ok := expected.([]byte)
-	if !ok {
-		return reflect.DeepEqual(expected, actual)
-	}
-
-	act, ok := actual.([]byte)
-	if !ok {
-		return false
-	}
-	if exp == nil || act == nil {
-		return exp == nil && act == nil
-	}
-	return bytes.Equal(exp, act)
 }

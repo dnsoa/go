@@ -63,13 +63,12 @@ func (a *Assertions) NotEmpty(object any, msgAndArgs ...any) {
 	NotEmpty(a.t, object, msgAndArgs...)
 }
 
-// Equal asserts that two objects are equal.
+// Equal asserts that two objects are equal using Go's built-in equality rules (==).
 //
 //	a.Equal(123, 123)
 //
-// Pointer variable equality is determined based on the equality of the
-// referenced values (as opposed to the memory addresses). Function equality
-// cannot be determined and will always fail.
+// Pointer equality is based on addresses; use DeepEqual to compare pointed-to values.
+// Non-comparable types (e.g. slices, maps, funcs) are not supported by Equal; use DeepEqual.
 func (a *Assertions) Equal(expected any, actual any, msgAndArgs ...any) {
 	if h, ok := a.t.(tHelper); ok {
 		h.Helper()
@@ -152,12 +151,12 @@ func (a *Assertions) NoError(err error, msgAndArgs ...any) {
 	NoError(a.t, err, msgAndArgs...)
 }
 
-// NotEqual asserts that the specified values are NOT equal.
+// NotEqual asserts that the specified values are NOT equal using Go's built-in inequality rules (!=).
 //
 //	a.NotEqual(obj1, obj2)
 //
-// Pointer variable equality is determined based on the equality of the
-// referenced values (as opposed to the memory addresses).
+// Pointer inequality is based on addresses; use DeepEqual to compare pointed-to values.
+// Non-comparable types (e.g. slices, maps, funcs) are not supported by NotEqual; use DeepEqual.
 func (a *Assertions) NotEqual(expected any, actual any, msgAndArgs ...any) {
 	if h, ok := a.t.(tHelper); ok {
 		h.Helper()

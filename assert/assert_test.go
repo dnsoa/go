@@ -31,7 +31,7 @@ func TestEqual(t *testing.T) {
 	assert.Equal(t, "Hello", "Hello")
 	assert.Equal(t, T{A: 10}, T{A: 10})
 	a := &T{A: 10}
-	b := &T{A: 10}
+	b := a
 	assert.Equal(t, a, b)
 }
 

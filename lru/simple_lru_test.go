@@ -143,9 +143,8 @@ func TestSimpleLRUEdgeCases(t *testing.T) {
 }
 
 func TestSimpleLRUConcurrent(t *testing.T) {
-	// SimpleLRU 不是并发安全的，需要外部加锁
+	// SimpleLRU 应该是并发安全的
 	lru := NewSimpleLRU[int, int](1000, nil)
-	var mu sync.Mutex
 	var wg sync.WaitGroup
 	numGoroutines := 10
 	numOps := 1000
@@ -157,9 +156,7 @@ func TestSimpleLRUConcurrent(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < numOps; j++ {
 				key := base*numOps + j
-				mu.Lock()
 				lru.Set(key, key*10)
-				mu.Unlock()
 			}
 		}(i)
 	}
@@ -173,9 +170,7 @@ func TestSimpleLRUConcurrent(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < numOps; j++ {
 				key := base*numOps + j
-				mu.Lock()
 				v, ok := lru.Get(key)
-				mu.Unlock()
 				if ok && v != key*10 {
 					errCh <- fmt.Errorf("key %d: expected %d, got %d", key, key*10, v)
 					return

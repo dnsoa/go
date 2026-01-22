@@ -1,8 +1,12 @@
 package lru
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 type SimpleLRU[K comparable, V any] struct {
+	mu       sync.RWMutex
 	capacity int
 	size     atomic.Int32
 	items    map[K]*lruEntry[K, V]
@@ -32,28 +36,55 @@ func (lru *SimpleLRU[K, V]) Capacity() int {
 }
 
 func (lru *SimpleLRU[K, V]) OnEvict() func(K, V) {
+	lru.mu.RLock()
+	defer lru.mu.RUnlock()
 	return lru.onEvict
 }
 
 func (lru *SimpleLRU[K, V]) SetOnEvict(onEvict func(K, V)) {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
 	lru.onEvict = onEvict
 }
 
 func (lru *SimpleLRU[K, V]) Clear() {
-	for k, entry := range lru.items {
-		if lru.onEvict != nil {
-			lru.onEvict(k, entry.value)
+	var evicted []struct {
+		k K
+		v V
+	}
+
+	lru.mu.Lock()
+	onEvict := lru.onEvict
+	if onEvict != nil {
+		evicted = make([]struct {
+			k K
+			v V
+		}, 0, len(lru.items))
+		for k, entry := range lru.items {
+			evicted = append(evicted, struct {
+				k K
+				v V
+			}{k: k, v: entry.value})
 		}
 	}
 	lru.items = make(map[K]*lruEntry[K, V])
 	lru.head = nil
 	lru.tail = nil
 	lru.size.Store(0)
+	lru.mu.Unlock()
+
+	if onEvict != nil {
+		for _, e := range evicted {
+			onEvict(e.k, e.v)
+		}
+	}
 }
 
 // Get 获取键对应的值，如果存在则将节点移到链表头部
 func (lru *SimpleLRU[K, V]) Get(key K) (V, bool) {
 	var zero V
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
 	entry, ok := lru.items[key]
 	if !ok {
 		return zero, false
@@ -65,9 +96,16 @@ func (lru *SimpleLRU[K, V]) Get(key K) (V, bool) {
 
 // Set 设置键值对，如果键已存在则更新值并移到头部
 func (lru *SimpleLRU[K, V]) Set(key K, value V) {
+	var evicted bool
+	var evk K
+	var evv V
+
+	lru.mu.Lock()
+	onEvict := lru.onEvict
 	if entry, ok := lru.items[key]; ok {
 		entry.value = value
 		lru.moveToFront(entry)
+		lru.mu.Unlock()
 		return
 	}
 
@@ -89,33 +127,45 @@ func (lru *SimpleLRU[K, V]) Set(key K, value V) {
 	lru.size.Add(1)
 
 	if int(lru.size.Load()) > lru.capacity {
-		lru.evict()
+		evk, evv, evicted = lru.evictLocked()
+	}
+	lru.mu.Unlock()
+
+	if evicted && onEvict != nil {
+		onEvict(evk, evv)
 	}
 }
 
 // Delete 删除键值对
 func (lru *SimpleLRU[K, V]) Delete(key K) bool {
-	entry, ok := lru.items[key]
-	if !ok {
-		return false
-	}
-
+	var evicted bool
 	var evk K
 	var evv V
-	if lru.onEvict != nil {
-		evk, evv = entry.key, entry.value
+
+	lru.mu.Lock()
+	onEvict := lru.onEvict
+	entry, ok := lru.items[key]
+	if !ok {
+		lru.mu.Unlock()
+		return false
 	}
-
+	if onEvict != nil {
+		evk, evv = entry.key, entry.value
+		evicted = true
+	}
 	lru.removeEntry(entry)
+	lru.mu.Unlock()
 
-	if lru.onEvict != nil {
-		lru.onEvict(evk, evv)
+	if evicted && onEvict != nil {
+		onEvict(evk, evv)
 	}
 	return true
 }
 
 // Contains 检查键是否存在（不更新访问顺序）
 func (lru *SimpleLRU[K, V]) Contains(key K) bool {
+	lru.mu.RLock()
+	defer lru.mu.RUnlock()
 	_, ok := lru.items[key]
 	return ok
 }
@@ -176,21 +226,21 @@ func (lru *SimpleLRU[K, V]) removeEntry(entry *lruEntry[K, V]) {
 }
 
 // evict 淘汰最久未使用的条目
-func (lru *SimpleLRU[K, V]) evict() {
+func (lru *SimpleLRU[K, V]) evictLocked() (K, V, bool) {
+	var zeroK K
+	var zeroV V
 	if lru.tail == nil {
-		return
+		return zeroK, zeroV, false
 	}
 
 	oldest := lru.tail
-	var evk K
-	var evv V
-	if lru.onEvict != nil {
-		evk, evv = oldest.key, oldest.value
+	onEvict := lru.onEvict
+	if onEvict == nil {
+		lru.removeEntry(oldest)
+		return zeroK, zeroV, false
 	}
 
+	evk, evv := oldest.key, oldest.value
 	lru.removeEntry(oldest)
-
-	if lru.onEvict != nil {
-		lru.onEvict(evk, evv)
-	}
+	return evk, evv, true
 }
