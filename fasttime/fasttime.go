@@ -40,12 +40,9 @@ func init() {
 
 	// Initialize with current time
 	currentTime.Store(time.Now().UnixNano())
-
 	// Start background updater
 	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for tm := range ticker.C {
+		for tm := range time.Tick(interval) {
 			currentTime.Store(tm.UnixNano())
 		}
 	}()
