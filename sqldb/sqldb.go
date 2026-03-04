@@ -27,21 +27,26 @@ func releaseStringBuilder(b *strings.Builder) {
 	stringBuilderPool.Put(b)
 }
 
+// DatabaseProvider is a legacy alias-like interface that exposes both
+// execution and query operations.
 type DatabaseProvider interface {
 	Execer
 	Queryer
 }
 
+// ExecerAndQueryer combines SQL execution and query capabilities.
 type ExecerAndQueryer interface {
 	Execer
 	Queryer
 }
 
+// Execer represents types that can execute SQL statements.
 type Execer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+// Queryer represents types that can perform SQL queries.
 type Queryer interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -49,10 +54,23 @@ type Queryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// Scan executes a query and scans into dest using context.Background.
+//
+// See ScanContext for supported destination types.
 func Scan(queryer Queryer, dest any, query string, args ...any) error {
 	return ScanContext(context.Background(), queryer, dest, query, args...)
 }
 
+// ScanContext executes a query and scans rows into dest.
+//
+// Supported destination types:
+//   - *struct: first row is scanned, sql.ErrNoRows if empty.
+//   - *[]struct / *[]*struct: all rows are scanned.
+//   - *[]scalar: single-column result scanned into scalar slice.
+//   - *scalar: first row first column scanned via row.Scan.
+//
+// Field mapping uses struct tags in this priority: `sql`, then `db`, then
+// lower-cased field name.
 func ScanContext(ctx context.Context, queryer Queryer, dest any, query string, args ...any) error {
 
 	var vp reflect.Value
@@ -207,6 +225,9 @@ func fixQuery(flavor Flavor, query string) string {
 	return builder.String()
 }
 
+// FormatSQL formats query with args expanded for debug output.
+//
+// It is intended for logging/tracing only and must not be used to execute SQL.
 func FormatSQL(query string, args []any) string {
 	builder := acquireStringBuilder()
 	defer releaseStringBuilder(builder)

@@ -250,6 +250,10 @@ func TestPage(t *testing.T) {
 	err = db.Table("users").Select("age").Where("age", ">", 7).Scan(&age1)
 	r.NoError(err)
 	r.Len(age1, 2)
+	var noUsers []models.Users
+	err = db.Table("users").Where("age", "IN", []any{}).Scan(&noUsers)
+	r.NoError(err)
+	r.Len(noUsers, 0)
 }
 
 func TestDB(t *testing.T) {

@@ -146,6 +146,10 @@ func composeWhere(whereBindings []map[string]any, startedAt int) string {
 			switch vi := v.(type) {
 			case []any:
 				dataLen := len(vi)
+				if dataLen == 0 {
+					where += k + " (NULL)"
+					continue
+				}
 				where += k + " (" + strings.Repeat("?,", dataLen)[:dataLen*2-1] + ")"
 			default:
 				// if strings.Contains(k, sqlOperatorIs) || strings.Contains(k, sqlOperatorBetween) {
