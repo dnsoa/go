@@ -6,6 +6,7 @@
 - 通用 `Scan`（结构体、结构体切片、基础类型切片）
 - 跨方言占位符转换（MySQL/SQLite 的 `?`、PostgreSQL 的 `$1...`）
 - 可选 SQL 调试日志与 trace 输出
+- 基于 `fs.FS` 的数据库迁移（`MigrateUp/MigrateDown/MigrateTo`）
 
 ## 支持数据库
 
@@ -75,6 +76,60 @@ err := db.Transaction(func(tx *sqldb.Tx) error {
 	}
 	return nil
 })
+```
+
+## 迁移（migrate）
+
+`sqldb` 内置了迁移引擎，支持基于 `fs.FS` 的迁移文件执行。
+
+迁移文件命名示例：
+
+- `1-init.up.sql`
+- `1-init.down.sql`
+- `2-user.up.sql`
+- `2-user.down.sql`
+
+```go
+import (
+	"context"
+	"os"
+
+	"github.com/dnsoa/go/sqldb"
+)
+
+db, _ := sqldb.Open("sqlite3", "app.db")
+defer db.Close()
+
+migrations := os.DirFS("migrations")
+
+// 一键升级到最新版本
+_ = db.MigrateUp(context.Background(), migrations)
+
+// 迁移到指定版本
+_ = db.MigrateTo(context.Background(), migrations, "1-init")
+
+// 回滚到初始状态
+_ = db.MigrateDown(context.Background(), migrations)
+```
+
+也可以创建可复用的迁移器并自定义迁移表名与回调：
+
+```go
+m, err := db.NewMigrator(
+	migrations,
+	sqldb.WithMigrationTable("schema_migrations"),
+	sqldb.WithMigrationBefore(func(ctx context.Context, tx *sql.Tx, version string) error {
+		return nil
+	}),
+	sqldb.WithMigrationAfter(func(ctx context.Context, tx *sql.Tx, version string) error {
+		return nil
+	}),
+)
+if err != nil {
+	panic(err)
+}
+
+_ = m.Up(context.Background())
 ```
 
 ## 扫描字段映射规则
