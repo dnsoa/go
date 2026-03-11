@@ -40,16 +40,12 @@ var (
 )
 
 func UnpackDomainName(msg []byte, off int) ([]byte, int, error) {
-	start := off
-	end := off
+	s := make([]byte, 0, maxDomainNamePresentationLength)
 	off1 := 0
 	lenmsg := len(msg)
 	budget := maxDomainNameWireOctets
 	ptr := 0 // number of pointers followed
 
-	// First pass: check if we can use fast path (no special chars or compression)
-	fastPath := true
-	off = start
 Loop:
 	for {
 		if off >= lenmsg {
@@ -60,95 +56,14 @@ Loop:
 		switch c & 0xC0 {
 		case 0x00:
 			if c == 0x00 {
+				// end of name
 				break Loop
 			}
+			// literal string
 			if off+c > lenmsg {
 				return nil, lenmsg, ErrBuf
 			}
-			// Check for special characters that need escaping (no budget consumption here)
-			for i := 0; i < c; i++ {
-				b := msg[off+i]
-				if isDomainNameLabelSpecial(b) || b < ' ' || b > '~' {
-					fastPath = false
-					break Loop
-				}
-			}
-			off += c
-			end = off
-		case 0xC0:
-			// compression pointer
-			if off >= lenmsg {
-				return nil, lenmsg, errors.New("dns: compression pointer out of bounds")
-			}
-			c1 := msg[off]
-			off++
-			if ptr == 0 {
-				off1 = off
-			}
-			if ptr++; ptr > maxCompressionPointers {
-				return nil, lenmsg, errors.New("too many compression pointers")
-			}
-			off = (c^0xC0)<<8 | int(c1)
-			fastPath = false // compression requires copy
-			break Loop
-		default:
-			return nil, lenmsg, ErrRdata
-		}
-	}
-	if ptr == 0 {
-		off1 = off
-	}
-
-	// Check if we can use zero-copy optimization for single-label names
-	if fastPath && end > start {
-		// Count labels to determine if zero-copy is viable
-		labelCount := 0
-		checkOff := start
-		for checkOff < end {
-			labelLen := int(msg[checkOff])
-			if labelLen == 0 {
-				break
-			}
-			labelCount++
-			checkOff += labelLen + 1
-		}
-
-		if labelCount == 1 {
-			// Single-label name: use buffer pool with minimal overhead
-			labelLen := int(msg[start])
-			buf := AcquireBuffer()
-			defer ReleaseBuffer(buf)
-			s := (*buf)[:0]
-			s = append(s, msg[start+1:start+1+labelLen]...)
-			s = append(s, '.')
-			result := make([]byte, len(s))
-			copy(result, s)
-			return result, off1, nil
-		}
-	}
-
-	// Slow path: use buffer pool for multi-label names, escaping, or compression
-	buf := AcquireBuffer()
-	defer ReleaseBuffer(buf)
-
-	s := (*buf)[:0]
-	off = start
-SlowLoop:
-	for {
-		if off >= lenmsg {
-			return nil, lenmsg, ErrBuf
-		}
-		c := int(msg[off])
-		off++
-		switch c & 0xC0 {
-		case 0x00:
-			if c == 0x00 {
-				break SlowLoop
-			}
-			if off+c > lenmsg {
-				return nil, lenmsg, ErrBuf
-			}
-			budget -= c + 1
+			budget -= c + 1 // +1 for the label separator
 			if budget <= 0 {
 				return nil, lenmsg, ErrLongDomain
 			}
@@ -164,6 +79,7 @@ SlowLoop:
 			s = append(s, '.')
 			off += c
 		case 0xC0:
+			// compression pointer
 			if off >= lenmsg {
 				return nil, lenmsg, errors.New("dns: compression pointer out of bounds")
 			}
@@ -179,6 +95,9 @@ SlowLoop:
 		default:
 			return nil, lenmsg, ErrRdata
 		}
+	}
+	if ptr == 0 {
+		off1 = off
 	}
 	if len(s) == 0 {
 		return []byte{'.'}, off1, nil
