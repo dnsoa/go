@@ -119,3 +119,47 @@ func TestClose(t *testing.T) {
 	}
 	ub.Close() // ignored
 }
+
+// BenchmarkUnbounded_Sequential benchmarks sequential put/load operations.
+func BenchmarkUnbounded_Sequential(b *testing.B) {
+	ub := NewUnbounded[int]()
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		ub.Put(i)
+		<-ub.Get()
+		ub.Load()
+	}
+}
+
+// BenchmarkUnbounded_Backlog benchmarks operations with backlog accumulation.
+func BenchmarkUnbounded_Backlog(b *testing.B) {
+	ub := NewUnbounded[int]()
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		// Fill backlog a bit before consuming
+		for j := 0; j < 10; j++ {
+			ub.Put(i)
+		}
+		for j := 0; j < 10; j++ {
+			<-ub.Get()
+			ub.Load()
+		}
+	}
+}
+
+// BenchmarkUnbounded_Concurrent benchmarks concurrent producers and consumers.
+func BenchmarkUnbounded_Concurrent(b *testing.B) {
+	ub := NewUnbounded[int]()
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			ub.Put(1)
+		}
+	})
+}

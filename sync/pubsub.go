@@ -26,38 +26,40 @@ import (
 // Subscriber represents an entity that is subscribed to messages published on
 // a PubSub. It wraps the callback to be invoked by the PubSub when a new
 // message is published.
-type Subscriber interface {
+type Subscriber[T any] interface {
 	// OnMessage is invoked when a new message is published. Implementations
 	// must not block in this method.
-	OnMessage(msg any)
+	OnMessage(msg T)
 }
 
+
 // PubSub is a simple one-to-many publish-subscribe system that supports
-// messages of arbitrary type. It guarantees that messages are delivered in
-// the same order in which they were published.
+// messages of type T. It guarantees that messages are delivered in the same
+// order in which they were published.
 //
 // Publisher invokes the Publish() method to publish new messages, while
 // subscribers interested in receiving these messages register a callback
 // via the Subscribe() method.
 //
 // Once a PubSub is stopped, no more messages can be published, but any pending
-// published messages will be delivered to the subscribers.  Done may be used
+// published messages will be delivered to the subscribers. Done may be used
 // to determine when all published messages have been delivered.
-type PubSub struct {
+type PubSub[T any] struct {
 	cs *CallbackSerializer
 
 	// Access to the below fields are guarded by this mutex.
 	mu          sync.Mutex
-	msg         any
-	subscribers map[Subscriber]bool
+	msg         T
+	msgSet      bool          // tracks whether msg has been set
+	subscribers map[Subscriber[T]]bool
 }
 
-// NewPubSub returns a new PubSub instance.  Users should cancel the
-// provided context to shutdown the PubSub.
-func NewPubSub(ctx context.Context) *PubSub {
-	return &PubSub{
+// NewPubSub returns a new PubSub instance. Users should cancel the provided
+// context to shutdown the PubSub.
+func NewPubSub[T any](ctx context.Context) *PubSub[T] {
+	return &PubSub[T]{
 		cs:          NewCallbackSerializer(ctx),
-		subscribers: map[Subscriber]bool{},
+		subscribers: map[Subscriber[T]]bool{},
 	}
 }
 
@@ -69,13 +71,13 @@ func NewPubSub(ctx context.Context) *PubSub {
 //
 // The caller is responsible for invoking the returned cancel function to
 // unsubscribe itself from the PubSub.
-func (ps *PubSub) Subscribe(sub Subscriber) (cancel func()) {
+func (ps *PubSub[T]) Subscribe(sub Subscriber[T]) (cancel func()) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
 	ps.subscribers[sub] = true
 
-	if ps.msg != nil {
+	if ps.msgSet {
 		msg := ps.msg
 		ps.cs.Schedule(func(context.Context) {
 			ps.mu.Lock()
@@ -96,11 +98,12 @@ func (ps *PubSub) Subscribe(sub Subscriber) (cancel func()) {
 
 // Publish publishes the provided message to the PubSub, and invokes
 // callbacks registered by subscribers asynchronously.
-func (ps *PubSub) Publish(msg any) {
+func (ps *PubSub[T]) Publish(msg T) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
 	ps.msg = msg
+	ps.msgSet = true
 	for sub := range ps.subscribers {
 		s := sub
 		ps.cs.Schedule(func(context.Context) {
@@ -116,6 +119,6 @@ func (ps *PubSub) Publish(msg any) {
 
 // Done returns a channel that is closed after the context passed to NewPubSub
 // is canceled and all updates have been sent to subscribers.
-func (ps *PubSub) Done() <-chan struct{} {
+func (ps *PubSub[T]) Done() <-chan struct{} {
 	return ps.cs.Done()
 }

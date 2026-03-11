@@ -11,19 +11,13 @@ import (
 //
 // All methods on this type are thread-safe and don't block on anything except
 // the underlying mutex used for synchronization.
-//
-// Unbounded supports values of any type to be stored in it by using a channel
-// of `any`. This means that a call to Put() incurs an extra memory allocation,
-// and also that users need a type assertion while reading. For performance
-// critical code paths, using Unbounded is strongly discouraged and defining a
-// new type specific implementation of this buffer is preferred. See
-// internal/transport/transport.go for an example of this.
 type Unbounded[T any] struct {
 	c       chan T
 	closed  bool
 	closing bool
 	mu      sync.Mutex
 	backlog []T
+	head    int // index of the first valid element in backlog
 }
 
 // NewUnbounded returns a new instance of Unbounded.
@@ -40,7 +34,8 @@ func (b *Unbounded[T]) Put(t T) error {
 	if b.closing {
 		return errBufferClosed
 	}
-	if len(b.backlog) == 0 {
+	if b.head == len(b.backlog) {
+		// No backlog, try to send directly to channel
 		select {
 		case b.c <- t:
 			return nil
@@ -57,13 +52,19 @@ func (b *Unbounded[T]) Put(t T) error {
 func (b *Unbounded[T]) Load() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.backlog) > 0 {
+	if b.head < len(b.backlog) {
 		select {
-		case b.c <- b.backlog[0]:
-			b.backlog = b.backlog[1:]
+		case b.c <- b.backlog[b.head]:
+			b.head++
+			// Compact the backlog when head has moved significantly
+			if b.head > 16 && b.head > len(b.backlog)/2 {
+				b.backlog = b.backlog[b.head:]
+				b.head = 0
+			}
 		default:
 		}
 	} else if b.closing && !b.closed {
+		b.closed = true
 		close(b.c)
 	}
 }
@@ -90,7 +91,7 @@ func (b *Unbounded[T]) Close() {
 		return
 	}
 	b.closing = true
-	if len(b.backlog) == 0 {
+	if b.head == len(b.backlog) {
 		b.closed = true
 		close(b.c)
 	}

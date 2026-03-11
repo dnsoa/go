@@ -33,9 +33,9 @@ func newTestSubscriber(chSize int) *testSubscriber {
 	return &testSubscriber{onMsgCh: make(chan int, chSize)}
 }
 
-func (ts *testSubscriber) OnMessage(msg any) {
+func (ts *testSubscriber) OnMessage(msg int) {
 	select {
-	case ts.onMsgCh <- msg.(int):
+	case ts.onMsgCh <- msg:
 	default:
 	}
 }
@@ -43,7 +43,7 @@ func (ts *testSubscriber) OnMessage(msg any) {
 func TestPubSub_PublishNoMsg(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
-	pubsub := NewPubSub(ctx)
+	pubsub := NewPubSub[int](ctx)
 
 	ts := newTestSubscriber(1)
 	pubsub.Subscribe(ts)
@@ -58,7 +58,7 @@ func TestPubSub_PublishNoMsg(t *testing.T) {
 func TestPubSub_PublishMsgs_RegisterSubs_And_Stop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
-	pubsub := NewPubSub(ctx)
+	pubsub := NewPubSub[int](ctx)
 
 	const numPublished = 10
 
@@ -172,7 +172,7 @@ func TestPubSub_PublishMsgs_RegisterSubs_And_Stop(t *testing.T) {
 func TestPubSub_PublishMsgs_BeforeRegisterSub(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
-	pubsub := NewPubSub(ctx)
+	pubsub := NewPubSub[int](ctx)
 
 	const numPublished = 3
 	for i := 0; i < numPublished; i++ {
@@ -193,4 +193,45 @@ func TestPubSub_PublishMsgs_BeforeRegisterSub(t *testing.T) {
 	case <-time.After(defaultTestShortTimeout):
 		t.Fatal("Timeout when expecting the onMessage() callback to be invoked")
 	}
+}
+
+func TestPubSub_SubscribeFunc(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	pubsub := NewPubSub[int](ctx)
+
+	// Create a subscriber struct from a function
+	ch := make(chan int, 1)
+	sub := &funcSubscriber{ch: ch}
+	cancelSub := pubsub.Subscribe(sub)
+
+	pubsub.Publish(42)
+
+	select {
+	case m := <-ch:
+		if m != 42 {
+			t.Errorf("expected 42, got %d", m)
+		}
+	case <-time.After(defaultTestShortTimeout):
+		t.Fatal("Timeout when expecting the subscriber func to be invoked")
+	}
+
+	// Unsubscribe and publish again
+	cancelSub()
+	pubsub.Publish(99)
+
+	select {
+	case <-ch:
+		t.Fatal("Subscriber func was invoked after unsubscribe")
+	case <-time.After(defaultTestShortTimeout):
+	}
+}
+
+// funcSubscriber is a helper that adapts a channel to receive messages.
+type funcSubscriber struct {
+	ch chan<- int
+}
+
+func (f *funcSubscriber) OnMessage(msg int) {
+	f.ch <- msg
 }

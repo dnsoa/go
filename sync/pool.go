@@ -1,38 +1,41 @@
+// Package sync provides synchronization utilities extensions beyond the standard library.
 package sync
 
 import (
 	"sync"
 )
 
-type PointerWithReset[T any] interface {
-	*T
-
+// resettable is an interface for types that can be reset for reuse.
+type resettable interface {
 	Reset()
 }
 
-type Pool[T any, P PointerWithReset[T]] struct {
+// Pool is a generic sync.Pool that optionally resets values before reuse.
+// T must be a type that implements resettable (has a Reset method).
+type Pool[T resettable] struct {
 	pool sync.Pool
-	New  func() P
+	New  func() T
 }
 
-func NewPool[T any, P PointerWithReset[T]](new func() P) *Pool[T, P] {
-	return &Pool[T, P]{
-		New: new,
+// NewPool creates a new Pool with the given constructor function.
+func NewPool[T resettable](new func() T) *Pool[T] {
+	return &Pool[T]{
+		pool: sync.Pool{New: func() any { return new() }},
+		New:  new,
 	}
 }
 
-func (p *Pool[T, P]) Put(value P) {
-	if value != nil {
-		value.Reset()
-		p.pool.Put(value)
-	}
+// Put returns value to the pool, resetting it first.
+// The caller should ensure value is not the zero value for T.
+func (p *Pool[T]) Put(value T) {
+	value.Reset()
+	p.pool.Put(value)
 }
 
-func (p *Pool[T, P]) Get() P {
-	rv, ok := p.pool.Get().(P)
-	if ok && rv != nil {
-		return rv
+// Get returns a value from the pool or creates a new one via New.
+func (p *Pool[T]) Get() T {
+	if v := p.pool.Get(); v != nil {
+		return v.(T)
 	}
-
 	return p.New()
 }
