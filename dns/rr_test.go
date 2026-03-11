@@ -363,3 +363,102 @@ func BenchmarkUnpackA(b *testing.B) {
 		_, _ = rr2.unpack(msg, 0)
 	}
 }
+
+func TestSOA(t *testing.T) {
+	r := assert.New(t)
+
+	// Test SOA pack/unpack
+	rr := &SOA{
+		Hdr: RR_Header{
+			Name:   "example.com.",
+			Rrtype: TypeSOA,
+			Class:  ClassINET,
+			Ttl:    3600,
+		},
+		Ns:      "ns1.example.com.",
+		Mbox:    "hostmaster.example.com.",
+		Serial:  2023010101,
+		Refresh: 3600,
+		Retry:   600,
+		Expire:  604800,
+		Minttl:  86400,
+	}
+
+	msg := make([]byte, 512)
+	off, err := rr.pack(msg, 0)
+	r.NoError(err)
+	r.True(off > 0)
+
+	// Unpack
+	rr2 := &SOA{Hdr: RR_Header{Name: "example.com.", Rrtype: TypeSOA, Class: ClassINET}}
+	off2, err := rr2.unpack(msg, 0)
+	r.NoError(err)
+	r.Equal(off, off2)
+	r.Equal(rr.Ns, rr2.Ns)
+	r.Equal(rr.Mbox, rr2.Mbox)
+	r.Equal(rr.Serial, rr2.Serial)
+	r.Equal(rr.Refresh, rr2.Refresh)
+	r.Equal(rr.Retry, rr2.Retry)
+	r.Equal(rr.Expire, rr2.Expire)
+	r.Equal(rr.Minttl, rr2.Minttl)
+}
+
+func TestPTR(t *testing.T) {
+	r := assert.New(t)
+
+	// Test PTR pack/unpack
+	rr := &PTR{
+		Hdr: RR_Header{
+			Name:   "1.0.0.127.in-addr.arpa.",
+			Rrtype: TypePTR,
+			Class:  ClassINET,
+			Ttl:    3600,
+		},
+		Ptr: "localhost.",
+	}
+
+	msg := make([]byte, 512)
+	off, err := rr.pack(msg, 0)
+	r.NoError(err)
+	r.True(off > 0)
+
+	// Unpack
+	rr2 := &PTR{Hdr: RR_Header{Name: "1.0.0.127.in-addr.arpa.", Rrtype: TypePTR, Class: ClassINET}}
+	off2, err := rr2.unpack(msg, 0)
+	r.NoError(err)
+	r.Equal(off, off2)
+	r.Equal(rr.Ptr, rr2.Ptr)
+}
+
+func TestSRV(t *testing.T) {
+	r := assert.New(t)
+
+	// Test SRV pack/unpack
+	rr := &SRV{
+		Hdr: RR_Header{
+			Name:   "_ldap._tcp.example.com.",
+			Rrtype: TypeSRV,
+			Class:  ClassINET,
+			Ttl:    3600,
+		},
+		Priority: 10,
+		Weight:   60,
+		Port:     389,
+		Target:   "ldap.example.com.",
+	}
+
+	msg := make([]byte, 512)
+	off, err := rr.pack(msg, 0)
+	r.NoError(err)
+	r.True(off > 0)
+
+	// Unpack
+	rr2 := &SRV{Hdr: RR_Header{Name: "_ldap._tcp.example.com.", Rrtype: TypeSRV, Class: ClassINET}}
+	off2, err := rr2.unpack(msg, 0)
+	r.NoError(err)
+	r.Equal(off, off2)
+	r.Equal(rr.Priority, rr2.Priority)
+	r.Equal(rr.Weight, rr2.Weight)
+	r.Equal(rr.Port, rr2.Port)
+	r.Equal(rr.Target, rr2.Target)
+}

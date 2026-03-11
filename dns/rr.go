@@ -254,3 +254,186 @@ func (rr *AAAA) String() string {
 	}
 	return rr.Hdr.String() + rr.AAAA.String()
 }
+
+// SOA record (Start of Authority)
+// RFC 1035, section 3.3.13
+type SOA struct {
+	Hdr     RR_Header
+	Ns      string  // Primary name server
+	Mbox    string  // Responsible mailbox
+	Serial  uint32  // Serial number
+	Refresh uint32  // Refresh interval
+	Retry   uint32  // Retry interval
+	Expire  uint32  // Expire limit
+	Minttl  uint32  // Minimum TTL
+}
+
+func (rr *SOA) Header() *RR_Header { return &rr.Hdr }
+
+func (rr *SOA) pack(msg []byte, off int) (off1 int, err error) {
+	off, err = packDomainName(rr.Ns, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packDomainName(rr.Mbox, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packUint32(rr.Serial, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packUint32(rr.Refresh, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packUint32(rr.Retry, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packUint32(rr.Expire, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packUint32(rr.Minttl, msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
+}
+
+func (rr *SOA) unpack(msg []byte, off int) (off1 int, err error) {
+	name, off, err := UnpackDomainName(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Ns = b2s(name)
+	name, off, err = UnpackDomainName(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Mbox = b2s(name)
+	rr.Serial, off, err = unpackUint32(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Refresh, off, err = unpackUint32(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Retry, off, err = unpackUint32(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Expire, off, err = unpackUint32(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Minttl, off, err = unpackUint32(msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
+}
+
+func (rr *SOA) String() string {
+	return rr.Hdr.String() +
+		rr.Ns + " " +
+		rr.Mbox + " " +
+		strconv.FormatUint(uint64(rr.Serial), 10) + " " +
+		strconv.FormatUint(uint64(rr.Refresh), 10) + " " +
+		strconv.FormatUint(uint64(rr.Retry), 10) + " " +
+		strconv.FormatUint(uint64(rr.Expire), 10) + " " +
+		strconv.FormatUint(uint64(rr.Minttl), 10)
+}
+
+// PTR record (Pointer)
+// RFC 1035, section 3.3.12
+type PTR struct {
+	Hdr RR_Header
+	Ptr string
+}
+
+func (rr *PTR) Header() *RR_Header { return &rr.Hdr }
+
+func (rr *PTR) pack(msg []byte, off int) (off1 int, err error) {
+	off, err = packDomainName(rr.Ptr, msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
+}
+
+func (rr *PTR) unpack(msg []byte, off int) (off1 int, err error) {
+	name, off, err := UnpackDomainName(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Ptr = b2s(name)
+	return off, nil
+}
+
+func (rr *PTR) String() string {
+	return rr.Hdr.String() + rr.Ptr
+}
+
+// SRV record (Service)
+// RFC 2782
+type SRV struct {
+	Hdr      RR_Header
+	Priority uint16 // Priority
+	Weight   uint16 // Weight
+	Port     uint16 // Port
+	Target   string // Target domain name
+}
+
+func (rr *SRV) Header() *RR_Header { return &rr.Hdr }
+
+func (rr *SRV) pack(msg []byte, off int) (off1 int, err error) {
+	off, err = packUint16(rr.Priority, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packUint16(rr.Weight, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packUint16(rr.Port, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packDomainName(rr.Target, msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
+}
+
+func (rr *SRV) unpack(msg []byte, off int) (off1 int, err error) {
+	rr.Priority, off, err = unpackUint16(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Weight, off, err = unpackUint16(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Port, off, err = unpackUint16(msg, off)
+	if err != nil {
+		return off, err
+	}
+	name, off, err := UnpackDomainName(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.Target = b2s(name)
+	return off, nil
+}
+
+func (rr *SRV) String() string {
+	return rr.Hdr.String() +
+		strconv.Itoa(int(rr.Priority)) + " " +
+		strconv.Itoa(int(rr.Weight)) + " " +
+		strconv.Itoa(int(rr.Port)) + " " +
+		rr.Target
+}

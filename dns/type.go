@@ -118,8 +118,11 @@ var TypeToRR = map[Type]func() RR{
 	TypeA:     func() RR { return new(A) },
 	TypeNS:    func() RR { return new(NS) },
 	TypeCNAME: func() RR { return new(CNAME) },
+	TypeSOA:   func() RR { return new(SOA) },
+	TypePTR:   func() RR { return new(PTR) },
 	TypeMX:    func() RR { return new(MX) },
 	TypeTXT:   func() RR { return new(TXT) },
+	TypeSRV:   func() RR { return new(SRV) },
 	TypeAAAA:  func() RR { return new(AAAA) },
 	TypeOPT:   func() RR { return new(OPT) },
 }

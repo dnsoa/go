@@ -411,6 +411,13 @@ func dddToByte[T ~[]byte | ~string](s T) byte {
 // packDomainName packs a domain name into msg at off.
 // Zero-allocation implementation - iterates directly over the string.
 func packDomainName(domain string, msg []byte, off int) (int, error) {
+	return packDomainNameWithCompression(domain, msg, off, nil)
+}
+
+// packDomainNameWithCompression packs a domain name with compression pointer support.
+// compression is a map of domain names to their offsets in msg.
+// If compression is nil, no compression is applied.
+func packDomainNameWithCompression(domain string, msg []byte, off int, compression map[string]int) (int, error) {
 	// Handle root domain
 	if domain == "." || domain == "" {
 		if off >= len(msg) {
@@ -421,11 +428,33 @@ func packDomainName(domain string, msg []byte, off int) (int, error) {
 	}
 
 	// Remove trailing dot if present
+	originalDomain := domain
 	if len(domain) > 0 && domain[len(domain)-1] == '.' {
 		domain = domain[:len(domain)-1]
 	}
 
+	// Check compression map for existing entry
+	if compression != nil {
+		if ptr, ok := compression[domain]; ok && ptr < off {
+			// Compression pointer must fit within 14 bits (0x3FFF)
+			if ptr > maxCompressionOffset {
+				// Can't use compression, fall through to normal packing
+			} else {
+				// Write compression pointer: 0xC0 | (ptr >> 8), ptr & 0xFF
+				if off+2 > len(msg) {
+					return off, &Error{err: "overflow packing compression pointer"}
+				}
+				msg[off] = 0xC0 | byte(ptr>>8)
+				msg[off+1] = byte(ptr)
+				return off + 2, nil
+			}
+		}
+	}
+
 	start := 0
+	startOff := off
+	originalOff := off
+
 	for i := 0; i < len(domain); i++ {
 		if domain[i] == '.' {
 			labelLen := i - start
@@ -441,6 +470,14 @@ func packDomainName(domain string, msg []byte, off int) (int, error) {
 			copy(msg[off:], domain[start:i])
 			off += labelLen
 			start = i + 1
+
+			// Add intermediate labels to compression map
+			if compression != nil {
+				partialDomain := domain[:i]
+				if _, exists := compression[partialDomain]; !exists {
+					compression[partialDomain] = originalOff
+				}
+			}
 		}
 	}
 
@@ -463,6 +500,14 @@ func packDomainName(domain string, msg []byte, off int) (int, error) {
 	}
 	msg[off] = 0
 	off++
+
+	// Add full domain to compression map
+	if compression != nil {
+		if _, exists := compression[originalDomain]; !exists {
+			compression[originalDomain] = startOff
+		}
+	}
+
 	return off, nil
 }
 

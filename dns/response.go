@@ -115,17 +115,106 @@ func (r *Response) SetQuestion(name string, typ Type, class Class) {
 }
 
 func (r *Response) Pack() []byte {
-	var buf []byte
-	hdr := r.Header.Pack()
-	buf = append(buf, hdr[:]...)
+	// Calculate approximate size needed
+	size := 512 // Header + Question + some RRs
+	for _, rr := range r.Answer {
+		if rr != nil {
+			size += 128
+		}
+	}
+	for _, rr := range r.Ns {
+		if rr != nil {
+			size += 128
+		}
+	}
+	for _, rr := range r.Extra {
+		if rr != nil {
+			size += 128
+		}
+	}
 
-	buf = append(buf, EncodeDomain(nil, b2s(r.Question.Name))...)
-	buf = append(buf, byte(r.Question.Type>>8), byte(r.Question.Type))
-	buf = append(buf, byte(r.Question.Class>>8), byte(r.Question.Class))
-	// for _, rr := range r.Answer {
-	// 	buf = append(buf, rr.Pack()...)
-	// }
-	return buf
+	buf := make([]byte, size)
+	off := 0
+
+	// Pack header
+	hdr := r.Header.Pack()
+	copy(buf[off:], hdr[:])
+	off += headerSize
+
+	// Create compression map for domain names
+	compression := make(map[string]int)
+
+	// Pack question section
+	off, _ = packDomainNameWithCompression(b2s(r.Question.Name), buf, off, compression)
+	buf[off] = byte(r.Question.Type >> 8)
+	buf[off+1] = byte(r.Question.Type)
+	buf[off+2] = byte(r.Question.Class >> 8)
+	buf[off+3] = byte(r.Question.Class)
+	off += 4
+
+	// Helper function to ensure buffer has enough space
+	ensureSpace := func(needed int) {
+		if off+needed > len(buf) {
+			newBuf := make([]byte, len(buf)*2)
+			copy(newBuf, buf)
+			buf = newBuf
+		}
+	}
+
+	// Helper function to pack an RR
+	packRR := func(rr RR) {
+		if rr == nil {
+			return
+		}
+		h := rr.Header()
+
+		// Pack RR name with compression
+		off, _ = packDomainNameWithCompression(h.Name, buf, off, compression)
+
+		// Ensure space for fixed part: Type(2) + Class(2) + TTL(4) + RDLENGTH(2) = 10 bytes
+		ensureSpace(10)
+
+		// Pack RR type, class, ttl
+		buf[off] = byte(h.Rrtype >> 8)
+		buf[off+1] = byte(h.Rrtype)
+		buf[off+2] = byte(h.Class >> 8)
+		buf[off+3] = byte(h.Class)
+		buf[off+4] = byte(h.Ttl >> 24)
+		buf[off+5] = byte(h.Ttl >> 16)
+		buf[off+6] = byte(h.Ttl >> 8)
+		buf[off+7] = byte(h.Ttl)
+		off += 8
+
+		// Reserve space for RDLENGTH
+		rdlengthOff := off
+		off += 2
+
+		// Pack RDATA
+		rdataStart := off
+		off, _ = rr.pack(buf, off)
+
+		// Fill in RDLENGTH
+		rdlength := uint16(off - rdataStart)
+		buf[rdlengthOff] = byte(rdlength >> 8)
+		buf[rdlengthOff+1] = byte(rdlength)
+	}
+
+	// Pack answer section
+	for _, rr := range r.Answer {
+		packRR(rr)
+	}
+
+	// Pack authority section
+	for _, rr := range r.Ns {
+		packRR(rr)
+	}
+
+	// Pack additional section
+	for _, rr := range r.Extra {
+		packRR(rr)
+	}
+
+	return buf[:off]
 }
 
 func (r *Response) Unpack(payload []byte) error {
