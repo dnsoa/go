@@ -110,9 +110,30 @@ func TestAllocPutThenGet(t *testing.T) {
 	}
 }
 
-var (
-	debruijinPos = [...]byte{0, 9, 1, 10, 13, 21, 2, 29, 11, 14, 16, 18, 22, 25, 3, 30, 8, 12, 20, 28, 15, 17, 24, 7, 19, 27, 23, 6, 26, 5, 4, 31}
-)
+// TestGetReturnsBuffer verifies Get returns *Buffer for proper recycling
+func TestGetReturnsBuffer(t *testing.T) {
+	alloc := New()
+
+	// Get returns *Buffer which can be recycled via Put
+	buf := alloc.Get(4)
+	if len(*buf) != 4 {
+		t.Fatalf("expected len 4, got %d", len(*buf))
+	}
+
+	// If you need []byte, dereference the buffer
+	bytes := *buf
+	bytes[0] = 'x'
+
+	// Always recycle the *Buffer, not the []byte
+	alloc.Put(buf)
+
+	// The recycled buffer is available for reuse
+	newBuf := alloc.Get(4)
+	if cap(*buf) != cap(*newBuf) {
+		t.Logf("Warning: recycling may not be working (caps %d vs %d)", cap(*buf), cap(*newBuf))
+	}
+	_ = newBuf
+}
 
 func BenchmarkAlloc(b *testing.B) {
 	alloc := New()

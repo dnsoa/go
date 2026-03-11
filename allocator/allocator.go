@@ -101,11 +101,6 @@ func (alloc *Allocator) Get(size int) *Buffer {
 	return p
 }
 
-// GetBytes 直接返回 []byte，简化调用
-func (alloc *Allocator) GetBytes(size int) []byte {
-	p := alloc.Get(size)
-	return *p
-}
 
 // Put 回收 []byte 指针到池
 func (alloc *Allocator) Put(p *Buffer) error {

@@ -173,3 +173,160 @@ func TestBytesMutability(t *testing.T) {
 		t.Fatalf("Bytes mutability not reflected in buffer: %q", b.String())
 	}
 }
+
+func TestBufferUtilityMethods(t *testing.T) {
+	// IsEmpty
+	var b1 Buffer
+	if !b1.IsEmpty() {
+		t.Error("empty buffer should be empty")
+	}
+	b2 := Buffer("test")
+	if b2.IsEmpty() {
+		t.Error("non-empty buffer should not be empty")
+	}
+
+	// Truncate
+	b := Buffer("hello world")
+	b = b.Truncate(5)
+	if b.String() != "hello" {
+		t.Errorf("Truncate failed: %q", b.String())
+	}
+
+	// First/Last
+	b = Buffer("hello")
+	if b.First(2).String() != "he" {
+		t.Error("First failed")
+	}
+	if b.Last(2).String() != "lo" {
+		t.Error("Last failed")
+	}
+
+	// Clone
+	b = Buffer("test")
+	cloned := b.Clone()
+	if !cloned.Equal(b) {
+		t.Error("Clone should produce equal buffer")
+	}
+	cloned[0] = 'x'
+	if cloned.Equal(b) {
+		t.Error("Modified clone should not equal original")
+	}
+
+	// Contains
+	b = Buffer("hello world")
+	if !b.ContainsString("hello") {
+		t.Error("Should contain hello")
+	}
+	if !b.ContainsByte('w') {
+		t.Error("Should contain 'w'")
+	}
+
+	// HasPrefix/HasSuffix
+	b = Buffer("hello world")
+	if !b.HasPrefixString("hello") {
+		t.Error("Should have prefix 'hello'")
+	}
+	if !b.HasSuffixString("world") {
+		t.Error("Should have suffix 'world'")
+	}
+
+	// Index
+	b = Buffer("hello")
+	if b.IndexString("l") != 2 {
+		t.Error("Index of 'l' should be 2")
+	}
+	if b.LastIndexByte('l') != 3 {
+		t.Error("LastIndex of 'l' should be 3")
+	}
+
+	// TrimSpace
+	b = Buffer("  hello  ")
+	b = b.TrimSpace()
+	if b.String() != "hello" {
+		t.Errorf("TrimSpace failed: %q", b.String())
+	}
+
+	// TrimPrefix/TrimSuffix
+	b = Buffer("hello world")
+	b = b.TrimPrefix("hello ")
+	if b.String() != "world" {
+		t.Errorf("TrimPrefix failed: %q", b.String())
+	}
+	b = Buffer("hello world")
+	b = b.TrimSuffix(" world")
+	if b.String() != "hello" {
+		t.Errorf("TrimSuffix failed: %q", b.String())
+	}
+
+	// Replace
+	b = Buffer("hello hello")
+	b = b.ReplaceAll([]byte("hello"), []byte("hi"))
+	if b.String() != "hi hi" {
+		t.Errorf("ReplaceAll failed: %q", b.String())
+	}
+
+	// Reverse
+	b = Buffer("abc")
+	b = b.Reverse()
+	if b.String() != "cba" {
+		t.Errorf("Reverse failed: %q", b.String())
+	}
+}
+
+func TestBufferJoin(t *testing.T) {
+	sep := Buffer(", ")
+	arr := []Buffer{Buffer("a"), Buffer("b"), Buffer("c")}
+	result := sep.Join(arr)
+	if result.String() != "a, b, c" {
+		t.Errorf("Join failed: %q", result.String())
+	}
+}
+
+// Benchmarks
+
+func BenchmarkBufferAppendString(b *testing.B) {
+	var buf Buffer
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf = buf.Reset()
+		buf = buf.AppendString("hello world")
+	}
+}
+
+func BenchmarkBufferString(b *testing.B) {
+	buf := Buffer("hello world")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = buf.String()
+	}
+}
+
+func BenchmarkBufferClone(b *testing.B) {
+	buf := Buffer("hello world, this is a test")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = buf.Clone()
+	}
+}
+
+func BenchmarkBufferContains(b *testing.B) {
+	buf := Buffer("hello world, this is a test")
+	sub := Buffer("world")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = buf.Contains(sub)
+	}
+}
+
+func BenchmarkBufferIndex(b *testing.B) {
+	buf := Buffer("hello world, this is a test")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = buf.IndexByte('o')
+	}
+}

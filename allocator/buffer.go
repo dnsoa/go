@@ -1,6 +1,7 @@
 package allocator
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -9,7 +10,9 @@ import (
 	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 	"unsafe"
 )
 
@@ -296,4 +299,369 @@ func (b Buffer) Pad(c byte, base int) Buffer {
 		}
 	}
 	return b
+}
+
+// IsEmpty returns true if the buffer has zero length.
+func (b Buffer) IsEmpty() bool {
+	return len(b) == 0
+}
+
+// Truncate discards all but the first n bytes from the buffer.
+func (b Buffer) Truncate(n int) Buffer {
+	if n < 0 {
+		n = 0
+	}
+	if n > len(b) {
+		n = len(b)
+	}
+	return b[:n]
+}
+
+// Grow grows the buffer's capacity to guarantee space for another n bytes.
+// It returns the extended buffer.
+func (b Buffer) Grow(n int) Buffer {
+	if n <= 0 {
+		return b
+	}
+	if len(b)+n > cap(b) {
+		// Need to grow
+		newCap := cap(b) * 2
+		if newCap < len(b)+n {
+			newCap = len(b) + n
+		}
+		newBuf := make(Buffer, len(b), newCap)
+		copy(newBuf, b)
+		return newBuf
+	}
+	return b
+}
+
+// Clone returns a copy of the buffer.
+func (b Buffer) Clone() Buffer {
+	if b == nil {
+		return nil
+	}
+	clone := make(Buffer, len(b))
+	copy(clone, b)
+	return clone
+}
+
+// Equal returns true if b and x contain the same bytes.
+func (b Buffer) Equal(x Buffer) bool {
+	return bytes.Equal(b, x)
+}
+
+// EqualBytes returns true if b and x contain the same bytes.
+func (b Buffer) EqualBytes(x []byte) bool {
+	return bytes.Equal(b, x)
+}
+
+// EqualString returns true if b equals the string s.
+func (b Buffer) EqualString(s string) bool {
+	return string(b) == s
+}
+
+// Compare returns an integer comparing two buffers lexicographically.
+func (b Buffer) Compare(x Buffer) int {
+	return bytes.Compare(b, x)
+}
+
+// Contains reports whether subslice is within b.
+func (b Buffer) Contains(subslice Buffer) bool {
+	return bytes.Contains(b, subslice)
+}
+
+// ContainsBytes reports whether byte slice is within b.
+func (b Buffer) ContainsBytes(subslice []byte) bool {
+	return bytes.Contains(b, subslice)
+}
+
+// ContainsString reports whether s is within b.
+func (b Buffer) ContainsString(s string) bool {
+	return strings.Contains(string(b), s)
+}
+
+// ContainsByte reports whether byte c is within b.
+func (b Buffer) ContainsByte(c byte) bool {
+	return bytes.IndexByte(b, c) >= 0
+}
+
+// HasPrefix tests whether the buffer begins with prefix.
+func (b Buffer) HasPrefix(prefix Buffer) bool {
+	return bytes.HasPrefix(b, prefix)
+}
+
+// HasPrefixBytes tests whether the buffer begins with prefix.
+func (b Buffer) HasPrefixBytes(prefix []byte) bool {
+	return bytes.HasPrefix(b, prefix)
+}
+
+// HasPrefixString tests whether the buffer begins with prefix string.
+func (b Buffer) HasPrefixString(prefix string) bool {
+	return strings.HasPrefix(string(b), prefix)
+}
+
+// HasSuffix tests whether the buffer ends with suffix.
+func (b Buffer) HasSuffix(suffix Buffer) bool {
+	return bytes.HasSuffix(b, suffix)
+}
+
+// HasSuffixBytes tests whether the buffer ends with suffix.
+func (b Buffer) HasSuffixBytes(suffix []byte) bool {
+	return bytes.HasSuffix(b, suffix)
+}
+
+// HasSuffixString tests whether the buffer ends with suffix string.
+func (b Buffer) HasSuffixString(suffix string) bool {
+	return strings.HasSuffix(string(b), suffix)
+}
+
+// Index returns the index of the first instance of subslice in b, or -1 if subslice is not present in b.
+func (b Buffer) Index(subslice Buffer) int {
+	return bytes.Index(b, subslice)
+}
+
+// IndexByte returns the index of the first instance of c in b, or -1 if c is not present in b.
+func (b Buffer) IndexByte(c byte) int {
+	return bytes.IndexByte(b, c)
+}
+
+// IndexString returns the index of the first instance of s in b, or -1 if s is not present in b.
+func (b Buffer) IndexString(s string) int {
+	return strings.Index(string(b), s)
+}
+
+// LastIndex returns the index of the last instance of subslice in b, or -1 if subslice is not present in b.
+func (b Buffer) LastIndex(subslice Buffer) int {
+	return bytes.LastIndex(b, subslice)
+}
+
+// LastIndexByte returns the index of the last instance of c in b, or -1 if c is not present in b.
+func (b Buffer) LastIndexByte(c byte) int {
+	return bytes.LastIndexByte(b, c)
+}
+
+// TrimSpace returns a subslice of the buffer with all leading and trailing Unicode whitespace removed.
+func (b Buffer) TrimSpace() Buffer {
+	return bytes.TrimSpace(b)
+}
+
+// TrimPrefix returns a buffer without the provided leading prefix string.
+// If the buffer doesn't start with prefix, it is returned unchanged.
+func (b Buffer) TrimPrefix(prefix string) Buffer {
+	if b.HasPrefixString(prefix) {
+		return b[len(prefix):]
+	}
+	return b
+}
+
+// TrimSuffix returns a buffer without the provided trailing suffix string.
+// If the buffer doesn't end with suffix, it is returned unchanged.
+func (b Buffer) TrimSuffix(suffix string) Buffer {
+	if b.HasSuffixString(suffix) {
+		return b[:len(b)-len(suffix)]
+	}
+	return b
+}
+
+// Trim returns a buffer with all leading and trailing bytes contained in cutset removed.
+func (b Buffer) Trim(cutset string) Buffer {
+	return Buffer(strings.Trim(string(b), cutset))
+}
+
+// ToLower returns a copy of the buffer with all Unicode letters mapped to their lower case.
+func (b Buffer) ToLower() Buffer {
+	if b == nil {
+		return nil
+	}
+	result := make(Buffer, len(b))
+	for i := range b {
+		result[i] = bytes.ToLower([]byte{b[i]})[0]
+	}
+	return result
+}
+
+// ToUpper returns a copy of the buffer with all Unicode letters mapped to their upper case.
+func (b Buffer) ToUpper() Buffer {
+	if b == nil {
+		return nil
+	}
+	result := make(Buffer, len(b))
+	for i := range b {
+		result[i] = bytes.ToUpper([]byte{b[i]})[0]
+	}
+	return result
+}
+
+// Replace returns a copy of the buffer with the first n non-overlapping instances
+// of old replaced by new. If n < 0, there is no limit on the number of replacements.
+func (b Buffer) Replace(old, new []byte, n int) Buffer {
+	return bytes.Replace(b, old, new, n)
+}
+
+// ReplaceAll returns a copy of the buffer with all non-overlapping instances
+// of old replaced by new.
+func (b Buffer) ReplaceAll(old, new []byte) Buffer {
+	return bytes.ReplaceAll(b, old, new)
+}
+
+// Split slices b into all subslices separated by sep and returns a slice of the subslices between those separators.
+func (b Buffer) Split(sep []byte) [][]byte {
+	return bytes.Split(b, sep)
+}
+
+// SplitN slices b into subslices separated by sep and returns a slice of the subslices between those separators.
+// The count determines the number of subslices to return.
+func (b Buffer) SplitN(sep []byte, n int) [][]byte {
+	return bytes.SplitN(b, sep, n)
+}
+
+// First returns the first n bytes of the buffer.
+func (b Buffer) First(n int) Buffer {
+	if n > len(b) {
+		n = len(b)
+	}
+	if n < 0 {
+		n = 0
+	}
+	return b[:n]
+}
+
+// Last returns the last n bytes of the buffer.
+func (b Buffer) Last(n int) Buffer {
+	if n > len(b) {
+		n = len(b)
+	}
+	if n < 0 {
+		n = 0
+	}
+	return b[len(b)-n:]
+}
+
+// AppendFormat formats according to a format specifier and appends to the buffer.
+func (b Buffer) AppendFormat(format string, a ...any) Buffer {
+	return append(b, fmt.Sprintf(format, a...)...)
+}
+
+// AppendJSON appends the JSON encoding of v to the buffer.
+func (b Buffer) AppendJSON(v any) Buffer {
+	js, err := json.Marshal(v)
+	if err != nil {
+		return b
+	}
+	return b.AppendBytes(js)
+}
+
+// AppendQuotedString appends s as a quoted JSON string to the buffer.
+func (b Buffer) AppendQuotedString(s string) Buffer {
+	return b.AppendString(strconv.Quote(s))
+}
+
+// Count counts the number of non-overlapping instances of subslice in b.
+func (b Buffer) Count(subslice Buffer) int {
+	return bytes.Count(b, subslice)
+}
+
+// Repeat returns a new buffer consisting of b count times.
+func (b Buffer) Repeat(count int) Buffer {
+	if count == 0 {
+		return Buffer{}
+	}
+	if count < 0 {
+		panic("negative repeat count")
+	}
+	result := make(Buffer, 0, len(b)*count)
+	for i := 0; i < count; i++ {
+		result = append(result, b...)
+	}
+	return result
+}
+
+// Join joins the elements of arr with b as the separator and returns the result.
+func (b Buffer) Join(arr []Buffer) Buffer {
+	if len(arr) == 0 {
+		return Buffer{}
+	}
+	if len(arr) == 1 {
+		return arr[0].Clone()
+	}
+	// Calculate total size
+	totalLen := len(b) * (len(arr) - 1)
+	for _, v := range arr {
+		totalLen += len(v)
+	}
+	result := make(Buffer, 0, totalLen)
+	for i, v := range arr {
+		if i > 0 {
+			result = append(result, b...)
+		}
+		result = append(result, v...)
+	}
+	return result
+}
+
+// Runes returns a slice of runes (Unicode code points) equivalent to the buffer.
+func (b Buffer) Runes() []rune {
+	return bytes.Runes(b)
+}
+
+// HasRune reports whether the buffer contains the specified Unicode code point.
+func (b Buffer) HasRune(r rune) bool {
+	return bytes.ContainsRune(b, r)
+}
+
+// ToTitle returns a copy of the buffer with all Unicode letters mapped to their title case.
+func (b Buffer) ToTitle() Buffer {
+	if b == nil {
+		return nil
+	}
+	return bytes.ToTitle(b)
+}
+
+// IsASCII returns true if b contains only ASCII characters.
+func (b Buffer) IsASCII() bool {
+	for _, c := range b {
+		if c > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
+}
+
+// Minimize returns a buffer with capacity equal to its length, freeing unused memory.
+func (b Buffer) Minimize() Buffer {
+	if cap(b) == len(b) {
+		return b
+	}
+	result := make(Buffer, len(b))
+	copy(result, b)
+	return result
+}
+
+// Swap swaps the values of indices i and j.
+func (b Buffer) Swap(i, j int) {
+	b[i], b[j] = b[j], b[i]
+}
+
+// Reverse reverses the buffer in place.
+func (b Buffer) Reverse() Buffer {
+	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
+	}
+	return b
+}
+
+// Unique removes consecutive duplicate elements from the buffer.
+func (b Buffer) Unique(delim byte) Buffer {
+	if len(b) == 0 {
+		return b
+	}
+	result := make(Buffer, 0, len(b))
+	result = append(result, b[0])
+	for i := 1; i < len(b); i++ {
+		if b[i] != b[i-1] {
+			result = append(result, b[i])
+		}
+	}
+	return result
 }
