@@ -39,6 +39,7 @@ func AcquireRequest() *Request {
 
 // ReleaseRequest returnes the dns request to the pool.
 func ReleaseRequest(msg *Request) {
+	msg.Reset()
 	requestPool.Put(msg)
 }
 
@@ -153,13 +154,27 @@ func (r *Request) SetQuestion(domain string, typ Type, class Class) {
 	if r.OPT.Hdr.Class == 0 {
 		return
 	}
-	//OPT
-	optHdr := r.OPT.Pack()
-	r.Raw = append(r.Raw, optHdr...)
+	// OPT RR - Domain name (root = 0x00)
+	r.Raw = append(r.Raw, 0)
+	// Type (OPT = 41)
+	r.Raw = append(r.Raw, byte(TypeOPT>>8), byte(TypeOPT))
+	// Class (UDP size)
+	r.Raw = append(r.Raw, byte(r.OPT.Hdr.Class>>8), byte(r.OPT.Hdr.Class))
+	// TTL (extended RCODE, version, flags)
+	r.Raw = append(r.Raw, byte(r.OPT.Hdr.Ttl>>24), byte(r.OPT.Hdr.Ttl>>16), byte(r.OPT.Hdr.Ttl>>8), byte(r.OPT.Hdr.Ttl))
+	// RDLENGTH placeholder
+	rdlengthOffset := len(r.Raw)
+	r.Raw = append(r.Raw, 0, 0)
+	// RDATA (options)
+	rdStart := len(r.Raw)
 	for _, o := range r.OPT.Options {
 		r.Raw = append(r.Raw, byte(o.Code>>8), byte(o.Code), byte(o.Length>>8), byte(o.Length))
 		r.Raw = append(r.Raw, o.Data...)
 	}
+	// Fill in RDLENGTH
+	rdlength := uint16(len(r.Raw) - rdStart)
+	r.Raw[rdlengthOffset] = byte(rdlength >> 8)
+	r.Raw[rdlengthOffset+1] = byte(rdlength)
 }
 
 func (r *Request) Unpack(payload []byte) error {
@@ -207,7 +222,9 @@ func (r *Request) Unpack(payload []byte) error {
 }
 
 func (r *Request) Reset() {
-	r.OPT = OPT{}
+	r.OPT.Hdr = RR_Header{}
+	r.OPT.Options = r.OPT.Options[:0]
+	r.OPT.Hdr.Rdlength = 0
 	r.Raw = r.Raw[:0]
 	r.Domain = r.Domain[:0]
 	r.Question = Question{}

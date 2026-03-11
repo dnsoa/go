@@ -97,6 +97,7 @@ func AcquireResponse() *Response {
 
 // ReleaseResponse returnes the dns response to the pool.
 func ReleaseResponse(msg *Response) {
+	msg.Reset()
 	responsePool.Put(msg)
 }
 
@@ -141,28 +142,19 @@ func (r *Response) Unpack(payload []byte) error {
 	}
 	r.Question = q
 
-	r.Answer, off, err = unpackRRslice(int(r.Header.Ancount), payload, off)
+	r.Answer, off, err = unpackRRslice(int(r.Header.Ancount), payload, off, r.Answer)
 	if err != nil {
 		return err
 	}
 
-	r.Ns, off, err = unpackRRslice(int(r.Header.Nscount), payload, off)
+	r.Ns, off, err = unpackRRslice(int(r.Header.Nscount), payload, off, r.Ns)
 	if err != nil {
 		return err
 	}
-	r.Extra, _, err = unpackRRslice(int(r.Header.Arcount), payload, off)
+	r.Extra, _, err = unpackRRslice(int(r.Header.Arcount), payload, off, r.Extra)
 	if err != nil {
 		return err
 	}
-
-	// for i := uint16(0); i < r.Header.Arcount; i++ {
-	// 	rr, _, err := r.unpackRR(payload, off)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	r.Extra = append(r.Extra, rr)
-	// 	// payload = payload[off:]
-	// }
 
 	return nil
 }
@@ -214,12 +206,11 @@ func (r *Response) unpackRR(data []byte, off int) (RR, int, error) {
 	}
 	switch typ {
 	case TypeA:
-		ip := net.IP(data[off : off+int(rdlength)])
 		rr = &A{
 			Hdr: rrHdr,
-			A:   ip,
 		}
-		off += int(rdlength)
+		copy(rr.(*A).A[:], data[off:off+net.IPv4len])
+		off += net.IPv4len
 	case TypeOPT:
 		rr = &OPT{
 			Hdr: rrHdr,
@@ -234,6 +225,8 @@ func (r *Response) unpackRR(data []byte, off int) (RR, int, error) {
 
 func (r *Response) Reset() {
 	r.Answer = r.Answer[:0]
+	r.Ns = r.Ns[:0]
 	r.Extra = r.Extra[:0]
 	r.Question = Question{}
+	r.Header = Header{}
 }

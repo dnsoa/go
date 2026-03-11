@@ -1,7 +1,6 @@
 package dns
 
 import (
-	"encoding/binary"
 	"net"
 	"strconv"
 )
@@ -39,22 +38,31 @@ func (rr *RFC3597) String() string {
 }
 
 type A struct {
-	A   net.IP
+	A   [4]byte // Fixed-size array to avoid net.IP allocations
 	Hdr RR_Header
+}
+
+// ipTo4 converts net.IP to [4]byte
+func ipTo4(ip net.IP) [4]byte {
+	if ip4 := ip.To4(); ip4 != nil {
+		return [4]byte{ip4[0], ip4[1], ip4[2], ip4[3]}
+	}
+	return [4]byte{}
 }
 
 func (rr *A) Header() *RR_Header { return &rr.Hdr }
 func (rr *A) String() string {
-	if rr.A == nil {
+	if rr.A == [4]byte{} {
 		return rr.Hdr.String()
 	}
-	return rr.Hdr.String() + rr.A.String()
+	return rr.Hdr.String() + net.IP(rr.A[:]).String()
 }
 func (rr *A) pack(msg []byte, off int) (off1 int, err error) {
-	off, err = packDataA(rr.A, msg, off)
-	if err != nil {
-		return off, err
+	if off+net.IPv4len > len(msg) {
+		return off, &Error{err: "overflow packing A"}
 	}
+	copy(msg[off:], rr.A[:])
+	off += net.IPv4len
 	return off, nil
 }
 
@@ -62,8 +70,7 @@ func (rr *A) unpack(msg []byte, off int) (off1 int, err error) {
 	if len(msg) < off+net.IPv4len {
 		return off, ErrInvalidRR
 	}
-	data := msg[off : off+net.IPv4len]
-	rr.A = net.IPv4(data[0], data[1], data[2], data[3]).To4()
+	copy(rr.A[:], msg[off:off+net.IPv4len])
 	off += net.IPv4len
 	return off, nil
 }
@@ -85,51 +92,58 @@ type NS struct {
 }
 
 func (rr *NS) Header() *RR_Header { return &rr.Hdr }
-func (rr *NS) Pack() []byte {
-	var buf []byte
-	// NAME
-	buf = append(buf, 0xc0, 0x0c)
-	// TYPE
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(TypeNS))
-	buf = append(buf, byte(TypeNS>>8), byte(TypeNS))
-	// CLASS
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(rr.Hdr.Class))
-	buf = append(buf, byte(rr.Hdr.Class>>8), byte(rr.Hdr.Class))
-	// TTL
-	binary.BigEndian.PutUint32(buf[len(buf):len(buf)+4], rr.Hdr.Ttl)
-	buf = append(buf, byte(rr.Hdr.Ttl>>24), byte(rr.Hdr.Ttl>>16), byte(rr.Hdr.Ttl>>8), byte(rr.Hdr.Ttl))
-	// RDLENGTH + RDATA
-	rd := EncodeDomain(nil, rr.NS)
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(len(rd)))
-	buf = append(buf, byte(len(rd)>>8), byte(len(rd)))
-	buf = append(buf, rd...)
-	return buf
+
+func (rr *NS) pack(msg []byte, off int) (off1 int, err error) {
+	off, err = packDomainName(rr.NS, msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
 }
 
-// CNAME 记录
+func (rr *NS) unpack(msg []byte, off int) (off1 int, err error) {
+	name, off, err := UnpackDomainName(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.NS = b2s(name)
+	return off, nil
+}
+
+func (rr *NS) String() string {
+	return rr.Hdr.String() + rr.NS
+}
+
+// CNAME record
 type CNAME struct {
 	Hdr   RR_Header
 	CNAME string
 }
 
 func (rr *CNAME) Header() *RR_Header { return &rr.Hdr }
-func (rr *CNAME) Pack() []byte {
-	var buf []byte
-	buf = append(buf, 0xc0, 0x0c)
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(TypeCNAME))
-	buf = append(buf, byte(TypeCNAME>>8), byte(TypeCNAME))
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(rr.Hdr.Class))
-	buf = append(buf, byte(rr.Hdr.Class>>8), byte(rr.Hdr.Class))
-	binary.BigEndian.PutUint32(buf[len(buf):len(buf)+4], rr.Hdr.Ttl)
-	buf = append(buf, byte(rr.Hdr.Ttl>>24), byte(rr.Hdr.Ttl>>16), byte(rr.Hdr.Ttl>>8), byte(rr.Hdr.Ttl))
-	rd := EncodeDomain(nil, rr.CNAME)
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(len(rd)))
-	buf = append(buf, byte(len(rd)>>8), byte(len(rd)))
-	buf = append(buf, rd...)
-	return buf
+
+func (rr *CNAME) pack(msg []byte, off int) (off1 int, err error) {
+	off, err = packDomainName(rr.CNAME, msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
 }
 
-// MX 记录
+func (rr *CNAME) unpack(msg []byte, off int) (off1 int, err error) {
+	name, off, err := UnpackDomainName(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.CNAME = b2s(name)
+	return off, nil
+}
+
+func (rr *CNAME) String() string {
+	return rr.Hdr.String() + rr.CNAME
+}
+
+// MX record
 type MX struct {
 	Hdr        RR_Header
 	Preference uint16
@@ -137,71 +151,106 @@ type MX struct {
 }
 
 func (rr *MX) Header() *RR_Header { return &rr.Hdr }
-func (rr *MX) Pack() []byte {
-	var buf []byte
-	buf = append(buf, 0xc0, 0x0c)
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(TypeMX))
-	buf = append(buf, byte(TypeMX>>8), byte(TypeMX))
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(rr.Hdr.Class))
-	buf = append(buf, byte(rr.Hdr.Class>>8), byte(rr.Hdr.Class))
-	binary.BigEndian.PutUint32(buf[len(buf):len(buf)+4], rr.Hdr.Ttl)
-	buf = append(buf, byte(rr.Hdr.Ttl>>24), byte(rr.Hdr.Ttl>>16), byte(rr.Hdr.Ttl>>8), byte(rr.Hdr.Ttl))
-	rd := EncodeDomain(nil, rr.MX)
-	rdlen := 2 + len(rd)
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(rdlen))
-	buf = append(buf, byte(rdlen>>8), byte(rdlen))
-	buf = append(buf, byte(rr.Preference>>8), byte(rr.Preference))
-	buf = append(buf, rd...)
-	return buf
+
+func (rr *MX) pack(msg []byte, off int) (off1 int, err error) {
+	off, err = packUint16(rr.Preference, msg, off)
+	if err != nil {
+		return off, err
+	}
+	off, err = packDomainName(rr.MX, msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
 }
 
-// TXT 记录
+func (rr *MX) unpack(msg []byte, off int) (off1 int, err error) {
+	rr.Preference, off, err = unpackUint16(msg, off)
+	if err != nil {
+		return off, err
+	}
+	name, off, err := UnpackDomainName(msg, off)
+	if err != nil {
+		return off, err
+	}
+	rr.MX = b2s(name)
+	return off, nil
+}
+
+func (rr *MX) String() string {
+	return rr.Hdr.String() + strconv.Itoa(int(rr.Preference)) + " " + rr.MX
+}
+
+// TXT record
 type TXT struct {
 	Hdr RR_Header
 	TXT []string
 }
 
 func (rr *TXT) Header() *RR_Header { return &rr.Hdr }
-func (rr *TXT) Pack() []byte {
-	var buf []byte
-	buf = append(buf, 0xc0, 0x0c)
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(TypeTXT))
-	buf = append(buf, byte(TypeTXT>>8), byte(TypeTXT))
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(rr.Hdr.Class))
-	buf = append(buf, byte(rr.Hdr.Class>>8), byte(rr.Hdr.Class))
-	binary.BigEndian.PutUint32(buf[len(buf):len(buf)+4], rr.Hdr.Ttl)
-	buf = append(buf, byte(rr.Hdr.Ttl>>24), byte(rr.Hdr.Ttl>>16), byte(rr.Hdr.Ttl>>8), byte(rr.Hdr.Ttl))
-	var txtData []byte
-	for _, s := range rr.TXT {
-		txtData = append(txtData, byte(len(s)))
-		txtData = append(txtData, s...)
+
+func (rr *TXT) pack(msg []byte, off int) (off1 int, err error) {
+	off, err = packStringTxt(rr.TXT, msg, off)
+	if err != nil {
+		return off, err
 	}
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(len(txtData)))
-	buf = append(buf, byte(len(txtData)>>8), byte(len(txtData)))
-	buf = append(buf, txtData...)
-	return buf
+	return off, nil
 }
 
-// AAAA 记录
+func (rr *TXT) unpack(msg []byte, off int) (off1 int, err error) {
+	rr.TXT, off, err = unpackStringTxt(msg, off)
+	if err != nil {
+		return off, err
+	}
+	return off, nil
+}
+
+func (rr *TXT) String() string {
+	s := rr.Hdr.String()
+	for i, txt := range rr.TXT {
+		if i > 0 {
+			s += " "
+		}
+		s += strconv.Quote(txt)
+	}
+	return s
+}
+
+// AAAA record
 type AAAA struct {
 	Hdr  RR_Header
 	AAAA net.IP
 }
 
 func (rr *AAAA) Header() *RR_Header { return &rr.Hdr }
-func (rr *AAAA) Pack() []byte {
-	var buf []byte
-	buf = append(buf, 0xc0, 0x0c)
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(TypeAAAA))
-	buf = append(buf, byte(TypeAAAA>>8), byte(TypeAAAA))
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], uint16(rr.Hdr.Class))
-	buf = append(buf, byte(rr.Hdr.Class>>8), byte(rr.Hdr.Class))
-	binary.BigEndian.PutUint32(buf[len(buf):len(buf)+4], rr.Hdr.Ttl)
-	buf = append(buf, byte(rr.Hdr.Ttl>>24), byte(rr.Hdr.Ttl>>16), byte(rr.Hdr.Ttl>>8), byte(rr.Hdr.Ttl))
-	binary.BigEndian.PutUint16(buf[len(buf):len(buf)+2], 16)
-	buf = append(buf, 0, 16)
-	buf = append(buf, rr.AAAA.To16()...)
-	return buf
+
+func (rr *AAAA) pack(msg []byte, off int) (off1 int, err error) {
+	if off+net.IPv6len > len(msg) {
+		return off, &Error{err: "overflow packing AAAA"}
+	}
+	ip := rr.AAAA.To16()
+	if ip == nil {
+		return off, &Error{err: "invalid IPv6 address"}
+	}
+	copy(msg[off:], ip)
+	off += net.IPv6len
+	return off, nil
 }
 
-// OPTRecord 已在其他文件实现
+func (rr *AAAA) unpack(msg []byte, off int) (off1 int, err error) {
+	if len(msg) < off+net.IPv6len {
+		return off, ErrInvalidRR
+	}
+	data := msg[off : off+net.IPv6len]
+	rr.AAAA = make(net.IP, net.IPv6len)
+	copy(rr.AAAA, data)
+	off += net.IPv6len
+	return off, nil
+}
+
+func (rr *AAAA) String() string {
+	if rr.AAAA == nil {
+		return rr.Hdr.String()
+	}
+	return rr.Hdr.String() + rr.AAAA.String()
+}

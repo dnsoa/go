@@ -100,8 +100,7 @@ func (r *OPT) pack(msg []byte, off int) (off1 int, err error) {
 }
 
 func (r *OPT) unpack(msg []byte, off int) (int, error) {
-	fmt.Println("unpack OPT")
-	for i := off; i < off+int(r.Hdr.Class); {
+	for i := off; i < off+int(r.Hdr.Rdlength); {
 		if i+4 > len(msg) {
 			return off, ErrInvalidOPT
 		}
@@ -115,14 +114,24 @@ func (r *OPT) unpack(msg []byte, off int) (int, error) {
 	}
 	return off + int(r.Hdr.Rdlength), nil
 }
+// Pack returns the wire format of the OPT RR (not including the name field which is always root).
+// This returns just the RDATA part (options), not the full RR.
 func (r *OPT) Pack() []byte {
-	var b [11]byte
-	binary.BigEndian.PutUint16(b[1:3], uint16(r.Hdr.Rrtype))
-	binary.BigEndian.PutUint16(b[3:5], uint16(r.Hdr.Class))
-	binary.BigEndian.PutUint32(b[5:9], r.Hdr.Ttl)
-	binary.BigEndian.PutUint16(b[9:11], r.Hdr.Rdlength)
-	return b[:]
+	// Calculate total size
+	size := 0
+	for _, o := range r.Options {
+		size += 4 + int(o.Length) // 2 bytes code + 2 bytes length + data
+	}
 
+	buf := make([]byte, size)
+	off := 0
+	for _, o := range r.Options {
+		binary.BigEndian.PutUint16(buf[off:off+2], uint16(o.Code))
+		binary.BigEndian.PutUint16(buf[off+2:off+4], o.Length)
+		copy(buf[off+4:], o.Data)
+		off += 4 + int(o.Length)
+	}
+	return buf
 }
 
 func (r *OPT) Unpack(data []byte) error {

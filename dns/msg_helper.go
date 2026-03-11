@@ -408,6 +408,87 @@ func dddToByte[T ~[]byte | ~string](s T) byte {
 	return byte((s[0]-'0')*100 + (s[1]-'0')*10 + (s[2] - '0'))
 }
 
+// packDomainName packs a domain name into msg at off.
+// Zero-allocation implementation - iterates directly over the string.
+func packDomainName(domain string, msg []byte, off int) (int, error) {
+	// Handle root domain
+	if domain == "." || domain == "" {
+		if off >= len(msg) {
+			return off, &Error{err: "overflow packing domain name"}
+		}
+		msg[off] = 0
+		return off + 1, nil
+	}
+
+	// Remove trailing dot if present
+	if len(domain) > 0 && domain[len(domain)-1] == '.' {
+		domain = domain[:len(domain)-1]
+	}
+
+	start := 0
+	for i := 0; i < len(domain); i++ {
+		if domain[i] == '.' {
+			labelLen := i - start
+			if labelLen > 63 {
+				return off, &Error{err: "label too long"}
+			}
+			if off+1+labelLen > len(msg) {
+				return off, &Error{err: "overflow packing domain name"}
+			}
+			msg[off] = byte(labelLen)
+			off++
+			// Copy label bytes directly
+			copy(msg[off:], domain[start:i])
+			off += labelLen
+			start = i + 1
+		}
+	}
+
+	// Last label
+	labelLen := len(domain) - start
+	if labelLen > 63 {
+		return off, &Error{err: "label too long"}
+	}
+	if off+1+labelLen > len(msg) {
+		return off, &Error{err: "overflow packing domain name"}
+	}
+	msg[off] = byte(labelLen)
+	off++
+	copy(msg[off:], domain[start:])
+	off += labelLen
+
+	// Root label
+	if off >= len(msg) {
+		return off, &Error{err: "overflow packing domain name"}
+	}
+	msg[off] = 0
+	off++
+	return off, nil
+}
+
+// splitDomainName splits a domain name into labels.
+func splitDomainName(domain string) []string {
+	if domain == "." || domain == "" {
+		return []string{}
+	}
+
+	// Remove trailing dot if present
+	if len(domain) > 0 && domain[len(domain)-1] == '.' {
+		domain = domain[:len(domain)-1]
+	}
+
+	var labels []string
+	start := 0
+	for i := 0; i < len(domain); i++ {
+		if domain[i] == '.' {
+			labels = append(labels, domain[start:i])
+			start = i + 1
+		}
+	}
+	labels = append(labels, domain[start:])
+	return labels
+}
+
 // Helper function for packing and unpacking
 func intToBytes(i *big.Int, length int) []byte {
 	buf := i.Bytes()

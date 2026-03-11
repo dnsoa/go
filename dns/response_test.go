@@ -44,7 +44,7 @@ func TestResponse(t *testing.T) {
 			Class:  ClassINET,
 			Ttl:    600,
 		},
-		A: net.IPv4(1, 1, 1, 1).To4(),
+		A: ipTo4(net.IPv4(1, 1, 1, 1)),
 	}
 	resp.Answer[1] = &A{
 		Hdr: RR_Header{
@@ -53,7 +53,7 @@ func TestResponse(t *testing.T) {
 			Class:  ClassINET,
 			Ttl:    600,
 		},
-		A: net.IPv4(3, 3, 3, 3).To4(),
+		A: ipTo4(net.IPv4(3, 3, 3, 3)),
 	}
 	t.Logf("%x", resp.Pack())
 	//4ffd85000001000200000001
@@ -141,12 +141,12 @@ func TestResponseUnpack(t *testing.T) {
 	r.Equal(TypeA, resp.Answer[0].Header().Rrtype)
 	r.Equal(ClassINET, resp.Answer[0].Header().Class)
 	r.Equal(uint32(600), resp.Answer[0].Header().Ttl)
-	r.Equal(net.IPv4(1, 1, 1, 1).To4(), resp.Answer[0].(*A).A)
+	r.DeepEqual([4]byte{1, 1, 1, 1}, resp.Answer[0].(*A).A)
 	r.Equal("axtqs.com.", resp.Answer[1].Header().Name)
 	r.Equal(TypeA, resp.Answer[1].Header().Rrtype)
 	r.Equal(ClassINET, resp.Answer[1].Header().Class)
 	r.Equal(uint32(600), resp.Answer[1].Header().Ttl)
-	r.Equal(net.IPv4(3, 3, 3, 3).To4(), resp.Answer[1].(*A).A)
+	r.DeepEqual([4]byte{3, 3, 3, 3}, resp.Answer[1].(*A).A)
 	// r.Equal(0, len(resp.Ns))
 	r.Equal(1, len(resp.Extra))
 	r.Equal(TypeOPT, resp.Extra[0].Header().Rrtype)

@@ -54,11 +54,11 @@ func (h *Header) OpCode() Opcode {
 }
 
 func (h *Header) SetRcode(rcode Rcode) {
-	// 清除当前Header中的Rcode字段（低4位）
+	// Clear the Rcode field (lower 4 bits)
 	h.Bits &= 0xFFFF ^ 0xF
 
-	// 设置QR位为1，表示这是一个响应消息
-	// 并将传入的rcode值设置到Rcode字段
+	// Set QR bit to 1 (this is a response message)
+	// and set the rcode value in the Rcode field
 	h.Bits |= 1<<15 | uint16(rcode)
 }
 

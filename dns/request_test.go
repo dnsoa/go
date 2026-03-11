@@ -67,7 +67,7 @@ func TestRequestUnpack(t *testing.T) {
 	r.Equal("\x05axtqs\x03com\x00", b2s(req.Question.Name))
 	r.Equal(TypeA, req.Question.Type)
 	r.Equal(ClassINET, req.Question.Class)
-	r.Equal(s2b("axtqs.com"), req.Domain)
+	r.DeepEqual(s2b("axtqs.com"), req.Domain)
 	//OPT
 	r.Equal("", req.OPT.Hdr.Name)
 	r.Equal(TypeOPT, req.OPT.Hdr.Rrtype)
@@ -78,7 +78,7 @@ func TestRequestUnpack(t *testing.T) {
 	r.Equal(OptionCodeCookie, req.OPT.Options[0].Code)
 	r.Equal(uint16(8), req.OPT.Options[0].Length)
 	cookie, _ := hex.DecodeString("74b82f2641563c8e")
-	r.Equal(cookie, req.OPT.Options[0].Data)
+	r.DeepEqual(cookie, req.OPT.Options[0].Data)
 
 }
 

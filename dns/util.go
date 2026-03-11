@@ -1,11 +1,18 @@
 package dns
 
-import (
-	_ "unsafe"
-)
-
 // EncodeDomain encodes domain to dst.
+// If dst has enough capacity, this will be zero-allocation.
 func EncodeDomain(dst []byte, domain string) []byte {
+	// Special case for root domain
+	if domain == "." || domain == "" {
+		return append(dst, 0)
+	}
+
+	// Remove trailing dot if present
+	if len(domain) > 0 && domain[len(domain)-1] == '.' {
+		domain = domain[:len(domain)-1]
+	}
+
 	i := len(dst)
 	j := i + len(domain)
 
@@ -28,9 +35,33 @@ func EncodeDomain(dst []byte, domain string) []byte {
 }
 
 func DecodeDomain(domain []byte) []byte {
-	// Domain
+	// Handle root domain
+	if len(domain) == 0 || domain[0] == 0 {
+		return []byte{'.'}
+	}
+
+	// Use buffer pool to reduce allocations for long domain names
+	if len(domain) > 32 {
+		buf := AcquireBuffer()
+		defer ReleaseBuffer(buf)
+
+		i := int(domain[0])
+		dst := (*buf)[:len(domain)]
+		copy(dst, domain)
+		dst = dst[1:]
+		for dst[i] != 0 {
+			j := int(dst[i])
+			dst[i] = '.'
+			i += j + 1
+		}
+		result := make([]byte, len(dst)-1)
+		copy(result, dst[:len(dst)-1])
+		return result
+	}
+
+	// Fast path for short domain names
 	i := int(domain[0])
-	var dst = make([]byte, len(domain))
+	dst := make([]byte, len(domain))
 	copy(dst, domain)
 	dst = dst[1:]
 	for dst[i] != 0 {
