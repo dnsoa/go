@@ -2,6 +2,7 @@ package sync
 
 import (
 	"bytes"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -106,6 +107,11 @@ func TestPool_AlwaysCreatesNew(t *testing.T) {
 }
 
 func TestPool_Reuse(t *testing.T) {
+	// Ensure the test runs with a single P to avoid sync.Pool per-P cache
+	// causing Put/Get to occur on different Ps and spuriously create a new value.
+	prev := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(prev)
+
 	createCnt := 0
 	pool := NewPool(func() *mockResettable {
 		createCnt++
