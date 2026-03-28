@@ -297,45 +297,6 @@ func (lru *ShardLRU[K, V]) Contains(key K) bool {
 	return ok
 }
 
-// EvictOne 从最满的分片中淘汰最久未使用的条目。
-// 返回被淘汰的 key、value，如果没有可淘汰的条目则返回 false。
-// 如果设置了 onEvict 回调，会在释放锁后调用。
-func (lru *ShardLRU[K, V]) EvictOne() (K, V, bool) {
-	// 找到条目最多的分片
-	var best *lruShard[K, V]
-	var bestSize int32
-	for i := range lru.shards {
-		s := int32(0)
-		if s = lru.shards[i].size.Load(); s == 0 {
-			continue
-		}
-		if s > bestSize {
-			bestSize = s
-			best = &lru.shards[i]
-		}
-	}
-	if best == nil {
-		var zeroK K
-		var zeroV V
-		return zeroK, zeroV, false
-	}
-
-	best.mu.Lock()
-	if best.tail == nil {
-		best.mu.Unlock()
-		var zeroK K
-		var zeroV V
-		return zeroK, zeroV, false
-	}
-	evk, evv, evicted := best.removeEntry(best.tail, lru)
-	best.mu.Unlock()
-
-	if evicted && lru.onEvict != nil {
-		lru.onEvict(evk, evv)
-	}
-	return evk, evv, evicted
-}
-
 // Stats 返回缓存统计信息,包括命中率和每个分片的负载
 func (lru *ShardLRU[K, V]) Stats() (hitRate float64, shardLoad []float64) {
 	access := uint64(0)
