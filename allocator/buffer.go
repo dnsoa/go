@@ -474,11 +474,7 @@ func (b Buffer) ToLower() Buffer {
 	if b == nil {
 		return nil
 	}
-	result := make(Buffer, len(b))
-	for i := range b {
-		result[i] = bytes.ToLower([]byte{b[i]})[0]
-	}
-	return result
+	return bytes.ToLower(b)
 }
 
 // ToUpper returns a copy of the buffer with all Unicode letters mapped to their upper case.
@@ -486,11 +482,7 @@ func (b Buffer) ToUpper() Buffer {
 	if b == nil {
 		return nil
 	}
-	result := make(Buffer, len(b))
-	for i := range b {
-		result[i] = bytes.ToUpper([]byte{b[i]})[0]
-	}
-	return result
+	return bytes.ToUpper(b)
 }
 
 // Replace returns a copy of the buffer with the first n non-overlapping instances
@@ -651,8 +643,8 @@ func (b Buffer) Reverse() Buffer {
 	return b
 }
 
-// Unique removes consecutive duplicate elements from the buffer.
-func (b Buffer) Unique(delim byte) Buffer {
+// Unique removes consecutive duplicate bytes from the buffer.
+func (b Buffer) Unique() Buffer {
 	if len(b) == 0 {
 		return b
 	}

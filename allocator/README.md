@@ -7,8 +7,8 @@
 - **分级池管理**: 使用 `sync.Pool` 管理不同 2^n 大小的 buffer
 - **自动扩容**: 请求大小自动向上取整到 2^n
 - **可选清零**: 回收时可选择是否清零数据
-- **内存统计**: 实时查看池中占用的内存大小
-- **自动清理**: 支持定期清理池中的旧对象
+- **借出统计**: 实时查看当前借出中的 buffer 总字节数
+- **自动清理**: 支持定期触发 GC，释放 `sync.Pool` 中的缓存对象
 
 ## 安装
 
@@ -30,7 +30,7 @@ buf := alloc.Get(1024) // 返回 *Buffer，实际容量是 1024 (2^10)
 copy(*buf, someData)
 
 // 使用完后回收
-alloc.Put(buf)
+alloc.Release(buf)
 ```
 
 ## 配置选项
@@ -43,6 +43,32 @@ alloc := allocator.New(allocator.WithZeroOnPut(true))
 alloc := allocator.New(allocator.WithAutoClean(time.Hour))
 defer alloc.StopAutoClean()
 ```
+
+## 全局默认分配器
+
+包级接口默认使用一个全局分配器实例：
+
+```go
+buf := allocator.Get(1024)
+defer func() {
+	if err := allocator.Release(buf); err != nil {
+		panic(err)
+	}
+}()
+```
+
+如果需要替换默认实现，可以直接原子切换到另一个 `*Allocator`：
+
+```go
+custom := allocator.New(allocator.WithZeroOnPut(true))
+allocator.SetDefault(custom)
+```
+
+说明：
+
+- `SetDefault()` 和 `ResetDefault()` 是并发安全的
+- `SetDefault()` 更适合在程序初始化阶段调用一次，再通过包级 `Get()` 和 `Release()` 统一访问
+- 新代码优先使用 `Release()`；`Put()` 仅保留给兼容旧调用方，不返回错误
 
 ## Buffer 类型
 
@@ -82,7 +108,7 @@ buf = buf.Reset()
 
 **重要**: `Get()` 返回 `*Buffer` 而不是 `[]byte`，这是为了：
 
-1. 支持正确回收 - 只有 `*Buffer` 可以通过 `Put()` 回收
+1. 支持正确回收 - 只有 `*Buffer` 可以通过 `Release()` 或 `Put()` 回收
 2. 避免混淆 - 明确区分可回收和不可回收的内存
 
 如果需要 `[]byte`，解引用即可：
@@ -90,7 +116,7 @@ buf = buf.Reset()
 buf := alloc.Get(1024)
 bytes := *buf  // 获取 []byte
 // ... 使用 bytes
-alloc.Put(buf) // 回收 *Buffer
+alloc.Release(buf) // 回收 *Buffer
 ```
 
 ## 性能对比

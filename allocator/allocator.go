@@ -19,11 +19,14 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+
+// Package allocator 提供面向高频字节切片复用的轻量内存分配器。
 package allocator
 
 import (
 	"errors"
 	"math/bits"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -66,12 +69,12 @@ func New(opts ...func(*Allocator)) *Allocator {
 	return alloc
 }
 
-// 可选：设置回收时是否清零
+// WithZeroOnPut 设置回收时是否清零
 func WithZeroOnPut(zero bool) func(*Allocator) {
 	return func(a *Allocator) { a.zeroOnPut = zero }
 }
 
-// 可选： 设置自动清理时间
+// WithAutoClean 设置自动清理时间
 func WithAutoClean(interval time.Duration) func(*Allocator) {
 	return func(a *Allocator) {
 		if interval <= 0 {
@@ -101,7 +104,6 @@ func (alloc *Allocator) Get(size int) *Buffer {
 	return p
 }
 
-
 // Put 回收 []byte 指针到池
 func (alloc *Allocator) Put(p *Buffer) error {
 	if p == nil {
@@ -129,7 +131,12 @@ func (alloc *Allocator) Put(p *Buffer) error {
 	return nil
 }
 
-// 统计当前内存占用（单位：字节）
+// Release 回收 []byte 指针到池。
+func (alloc *Allocator) Release(p *Buffer) error {
+	return alloc.Put(p)
+}
+
+// CurrentBytes 返回当前借出中的 buffer 总字节数。
 func (alloc *Allocator) CurrentBytes() int64 {
 	var total int64
 	for k := range alloc.objCounts {
@@ -141,6 +148,7 @@ func (alloc *Allocator) CurrentBytes() int64 {
 	return total
 }
 
+// StartAutoClean 定期触发 GC，以便 runtime 回收 sync.Pool 中的缓存对象。
 func (alloc *Allocator) StartAutoClean(interval time.Duration) {
 	alloc.cleanOnce.Do(func() {
 		alloc.cleanStop = make(chan struct{})
@@ -150,17 +158,7 @@ func (alloc *Allocator) StartAutoClean(interval time.Duration) {
 			for {
 				select {
 				case <-ticker.C:
-					for k := range alloc.buffers {
-						k := k
-						size := 1 << uint(k)
-						alloc.buffers[k].New = func() any {
-							b := make(Buffer, size)
-							return &b
-						}
-						// 触发GC，丢弃旧对象,只有重置 `New` 字段并发生 GC，才会清理池中未被引用的对象。
-						alloc.buffers[k].Put(nil)
-						atomic.StoreInt64(&alloc.objCounts[k], 0)
-					}
+					runtime.GC()
 				case <-alloc.cleanStop:
 					return
 				}
@@ -169,6 +167,7 @@ func (alloc *Allocator) StartAutoClean(interval time.Duration) {
 	})
 }
 
+// StopAutoClean 停止自动清理协程。
 func (alloc *Allocator) StopAutoClean() {
 	alloc.cleanStopOnce.Do(func() {
 		if alloc.cleanStop != nil {

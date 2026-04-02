@@ -271,6 +271,23 @@ func TestBufferUtilityMethods(t *testing.T) {
 	if b.String() != "cba" {
 		t.Errorf("Reverse failed: %q", b.String())
 	}
+
+	// Unique
+	b = Buffer("aaabccddd")
+	b = b.Unique()
+	if b.String() != "abcd" {
+		t.Errorf("Unique failed: %q", b.String())
+	}
+}
+
+func TestBufferUnicodeCase(t *testing.T) {
+	b := Buffer("ÄÖÜİßHello")
+	if got := b.ToLower().String(); got != "äöüißhello" {
+		t.Fatalf("ToLower failed: %q", got)
+	}
+	if got := Buffer("äöüihello").ToUpper().String(); got != "ÄÖÜIHELLO" {
+		t.Fatalf("ToUpper failed: %q", got)
+	}
 }
 
 func TestBufferJoin(t *testing.T) {

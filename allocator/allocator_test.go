@@ -29,20 +29,27 @@ import (
 
 func TestAlloc(t *testing.T) {
 	alloc := New(WithZeroOnPut(true))
-	t.Log(alloc.CurrentBytes())
+	buffers := make([]*Buffer, 0, 10)
 	for range 10 {
-		alloc.Get(DefaultMaxSize)
+		buffers = append(buffers, alloc.Get(DefaultMaxSize))
 	}
 	if alloc.CurrentBytes() != DefaultMaxSize*10 {
 		t.Fatal("CurrentBytes() misbehavior")
 	}
 	alloc.StartAutoClean(time.Millisecond * 200)
 	defer alloc.StopAutoClean()
-	time.Sleep(1 * time.Second)
+	time.Sleep(300 * time.Millisecond)
+	if alloc.CurrentBytes() != DefaultMaxSize*10 {
+		t.Fatal("CurrentBytes() should keep borrowed buffers counted during auto clean")
+	}
+	for _, buf := range buffers {
+		if err := alloc.Release(buf); err != nil {
+			t.Fatalf("Release returned error: %v", err)
+		}
+	}
 	if alloc.CurrentBytes() != 0 {
 		t.Fatal("CurrentBytes() misbehavior")
 	}
-
 }
 
 func TestAllocGet(t *testing.T) {
@@ -109,6 +116,37 @@ func TestAllocPutThenGet(t *testing.T) {
 		t.Fatal("different cap while alloc.Get()")
 	}
 }
+
+func TestAllocRelease(t *testing.T) {
+	alloc := New()
+	buf := alloc.Get(4)
+	if err := alloc.Release(buf); err != nil {
+		t.Fatalf("Release returned error: %v", err)
+	}
+
+	invalid := make(Buffer, 3)
+	if err := alloc.Release(&invalid); err == nil {
+		t.Fatal("Release should return allocator errors")
+	}
+}
+
+func TestAllocAutoCleanKeepsCurrentBytesAccurate(t *testing.T) {
+	alloc := New()
+	buf := alloc.Get(8)
+	alloc.StartAutoClean(time.Millisecond * 50)
+	defer alloc.StopAutoClean()
+
+	time.Sleep(120 * time.Millisecond)
+	if alloc.CurrentBytes() != 8 {
+		t.Fatalf("CurrentBytes after auto clean = %d, want 8", alloc.CurrentBytes())
+	}
+	if err := alloc.Release(buf); err != nil {
+		t.Fatalf("Release returned error: %v", err)
+	}
+	if alloc.CurrentBytes() != 0 {
+		t.Fatalf("CurrentBytes after Release = %d, want 0", alloc.CurrentBytes())
+	}
+	}
 
 // TestGetReturnsBuffer verifies Get returns *Buffer for proper recycling
 func TestGetReturnsBuffer(t *testing.T) {
