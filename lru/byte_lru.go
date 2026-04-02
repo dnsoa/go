@@ -375,3 +375,35 @@ func (lru *ByteLRU[K, V]) Stats() (count int, curBytes int64, maxBytes int) {
 	maxBytes = lru.maxBytes
 	return
 }
+
+// EvictExpired removes all entries for which shouldEvict returns true.
+// Deletion and eviction callbacks happen under a single Lock acquisition.
+// Returns the number of entries removed.
+func (lru *ByteLRU[K, V]) EvictExpired(shouldEvict func(V) bool) int {
+	var evictedEntries []struct {
+		k K
+		v V
+	}
+
+	lru.mu.Lock()
+	onEvict := lru.onEvict
+	for k, entry := range lru.items {
+		if shouldEvict(entry.value) {
+			if onEvict != nil {
+				evictedEntries = append(evictedEntries, struct {
+					k K
+					v V
+				}{k: k, v: entry.value})
+			}
+			lru.removeEntry(entry)
+		}
+	}
+	lru.mu.Unlock()
+
+	if onEvict != nil {
+		for _, e := range evictedEntries {
+			onEvict(e.k, e.v)
+		}
+	}
+	return len(evictedEntries)
+}
