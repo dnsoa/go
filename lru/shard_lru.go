@@ -3,15 +3,13 @@ package lru
 import (
 	"hash/maphash"
 	"math/bits"
-	"runtime"
 	"sync"
 	"sync/atomic"
 )
 
-var (
-	// 确保默认分片数量为 2 的幂，避免位掩码分片偏斜
-	defaultShardNUM = nextPowerOfTwo(runtime.GOMAXPROCS(0) * 4)
-	defaultCapacity = 4096
+const (
+	defaultShardCount = 32
+	defaultCapacity   = 4096
 )
 
 type ShardLRUOption[K comparable, V any] func(*ShardLRU[K, V])
@@ -63,7 +61,6 @@ type lruShard[K comparable, V any] struct {
 
 // ShardLRU 是一个分片式的 LRU 缓存
 type ShardLRU[K comparable, V any] struct {
-	entryPool  sync.Pool
 	onEvict    func(K, V) // 淘汰回调
 	capacity   int
 	shardCount int
@@ -77,10 +74,9 @@ type ShardLRU[K comparable, V any] struct {
 // capacity: 总容量，会平均分配给所有分片
 func NewShardLRU[K comparable, V any](options ...ShardLRUOption[K, V]) *ShardLRU[K, V] {
 	m := &ShardLRU[K, V]{
-		shardCount: defaultShardNUM, // 默认分片数
+		shardCount: defaultShardCount,
 		capacity:   defaultCapacity, // 默认容量
 		seed:       maphash.MakeSeed(),
-		entryPool:  sync.Pool{New: func() any { return new(lruEntry[K, V]) }},
 	}
 	for _, option := range options {
 		option(m)
@@ -146,11 +142,10 @@ func (lru *ShardLRU[K, V]) Set(key K, value V) {
 		return
 	}
 
-	entry := lru.entryPool.Get().(*lruEntry[K, V])
-	entry.key = key
-	entry.value = value
-	entry.prev = nil
-	entry.next = nil
+	entry := &lruEntry[K, V]{
+		key:   key,
+		value: value,
+	}
 
 	if shard.head == nil {
 		shard.head = entry
@@ -169,7 +164,7 @@ func (lru *ShardLRU[K, V]) Set(key K, value V) {
 	var evicted bool
 	if int(shard.size.Load()) > shard.capacity {
 		oldest := shard.tail
-		evk, evv, evicted = shard.removeEntry(oldest, lru)
+		evk, evv, evicted = shard.removeEntry(oldest)
 	}
 
 	shard.mu.Unlock()
@@ -189,7 +184,7 @@ func (lru *ShardLRU[K, V]) Delete(key K) bool {
 		return false
 	}
 
-	evk, evv, evicted := shard.removeEntry(entry, lru)
+	evk, evv, evicted := shard.removeEntry(entry)
 	shard.mu.Unlock()
 
 	if evicted && lru.onEvict != nil {
@@ -230,10 +225,10 @@ func (s *lruShard[K, V]) moveToFront(entry *lruEntry[K, V]) {
 }
 
 // 从链表和映射中移除条目（不在持锁期间触发 onEvict）
-func (s *lruShard[K, V]) removeEntry(entry *lruEntry[K, V], m *ShardLRU[K, V]) (K, V, bool) {
+func (s *lruShard[K, V]) removeEntry(entry *lruEntry[K, V]) (K, V, bool) {
 	var zeroK K
 	var zeroV V
-	if entry == nil || m == nil {
+	if entry == nil {
 		return zeroK, zeroV, false
 	}
 
@@ -256,9 +251,7 @@ func (s *lruShard[K, V]) removeEntry(entry *lruEntry[K, V], m *ShardLRU[K, V]) (
 	s.size.Add(-1)
 
 	// 清理引用，避免内存泄漏
-	entry.key, entry.value = *new(K), zeroV
 	entry.prev, entry.next = nil, nil
-	m.entryPool.Put(entry)
 
 	return k, v, true
 }
@@ -277,7 +270,24 @@ func (lru *ShardLRU[K, V]) Len() int {
 func (lru *ShardLRU[K, V]) Clear() {
 	for i := range lru.shards {
 		shard := &lru.shards[i]
+		var evictedEntries []struct {
+			k K
+			v V
+		}
 		shard.mu.Lock()
+		if lru.onEvict != nil {
+			evictedEntries = make([]struct {
+				k K
+				v V
+			}, 0, len(shard.items))
+			for k, entry := range shard.items {
+				evictedEntries = append(evictedEntries, struct {
+					k K
+					v V
+				}{k: k, v: entry.value})
+				entry.prev, entry.next = nil, nil
+			}
+		}
 		shard.items = make(map[K]*lruEntry[K, V])
 		shard.head = nil
 		shard.tail = nil
@@ -285,6 +295,12 @@ func (lru *ShardLRU[K, V]) Clear() {
 		shard.accessCnt.Store(0)
 		shard.hitCnt.Store(0)
 		shard.mu.Unlock()
+
+		if lru.onEvict != nil {
+			for _, e := range evictedEntries {
+				lru.onEvict(e.k, e.v)
+			}
+		}
 	}
 }
 

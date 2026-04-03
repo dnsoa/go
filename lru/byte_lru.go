@@ -148,6 +148,7 @@ func (lru *ByteLRU[K, V]) Clear() {
 				k K
 				v V
 			}{k: k, v: entry.value})
+			entry.prev, entry.next = nil, nil
 		}
 	}
 	lru.items = make(map[K]*byteEntry[K, V])
@@ -216,14 +217,13 @@ func (lru *ByteLRU[K, V]) Set(key K, value V) {
 
 		// 先淘汰直到有足够空间
 		for lru.curBytes.Load()+int64(newSize) > int64(lru.maxBytes) && lru.tail != nil {
-			evk, evv, evSize := lru.evictOneLocked()
+			evk, evv, _ := lru.evictOneLocked()
 			if onEvict != nil {
 				evictedEntries = append(evictedEntries, struct {
 					k K
 					v V
 				}{k: evk, v: evv})
 			}
-			_ = evSize // 避免未使用变量警告
 		}
 
 		// 插入新条目
@@ -331,6 +331,7 @@ func (lru *ByteLRU[K, V]) removeEntry(entry *byteEntry[K, V]) {
 
 	delete(lru.items, entry.key)
 	lru.curBytes.Add(int64(-entry.size))
+	entry.prev, entry.next = nil, nil
 }
 
 // evictOneLocked 淘汰最久未使用的条目（调用时必须持有锁）

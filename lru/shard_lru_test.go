@@ -163,7 +163,7 @@ func TestLRUShardMapEdgeCases(t *testing.T) {
 	// 测试创建时的边缘情况
 	lru1 := NewShardLRU[string, int]()
 	// 应该使用默认值创建
-	if len(lru1.shards) != defaultShardNUM || lru1.shards[0].capacity != defaultCapacity/defaultShardNUM {
+	if len(lru1.shards) != defaultShardCount || lru1.shards[0].capacity != defaultCapacity/defaultShardCount {
 		t.Error("Failed to use default values for invalid parameters")
 	}
 

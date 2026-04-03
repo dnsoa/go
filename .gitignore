@@ -23,3 +23,4 @@ go.work
 # env file
 .env
 go.work.sum
+.claude.json
