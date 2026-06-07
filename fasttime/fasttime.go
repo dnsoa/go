@@ -27,6 +27,9 @@ const (
 
 	// SecondsPerHour is the number of seconds in an hour.
 	SecondsPerHour = 3600
+
+	// nanosPerSecond is the number of nanoseconds in a second.
+	nanosPerSecond = int64(time.Second)
 )
 
 // currentTime holds unix nano timestamp updated periodically.
@@ -40,10 +43,18 @@ func init() {
 
 	// Initialize with current time
 	currentTime.Store(time.Now().UnixNano())
-	// Start background updater
+	// Start background updater.
+	//
+	// We read time.Now() at store-time rather than using the time delivered
+	// on the ticker channel: that value is the scheduled tick time, which may
+	// already be stale by up to one interval if the goroutine is woken late
+	// under load. time.NewTicker is used over time.Tick because the latter's
+	// underlying Ticker can never be reclaimed by the GC.
 	go func() {
-		for tm := range time.Tick(interval) {
-			currentTime.Store(tm.UnixNano())
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			currentTime.Store(time.Now().UnixNano())
 		}
 	}()
 }
@@ -61,7 +72,7 @@ func UnixNano() int64 {
 
 // UnixTime returns the current unix timestamp in seconds.
 func UnixTime() int64 {
-	return currentTime.Load() / 1e9
+	return currentTime.Load() / nanosPerSecond
 }
 
 // UnixDate returns date from the current unix timestamp.
