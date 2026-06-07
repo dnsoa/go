@@ -22,7 +22,12 @@ func appendFields(fields []field, t reflect.Type, index []int) []field {
 	for i, n := 0, t.NumField(); i < n; i++ {
 		if f := t.Field(i); f.IsExported() {
 			if len(index) > 0 {
-				f.Index = append(index, f.Index...)
+				// Build a fresh index path. Appending onto the shared parent
+				// slice would alias backing storage between sibling fields and
+				// corrupt indexes for deeply nested embedded structs.
+				idx := make([]int, 0, len(index)+len(f.Index))
+				idx = append(idx, index...)
+				f.Index = append(idx, f.Index...)
 			}
 			if f.Anonymous {
 				if f.Type.Kind() == reflect.Struct {

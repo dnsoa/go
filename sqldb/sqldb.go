@@ -139,16 +139,22 @@ func ScanContext(ctx context.Context, queryer Queryer, dest any, query string, a
 			}
 
 			vp = reflect.New(base)
-			scanArgs := make([]any, 1)
+			scanArgs := []any{vp.Interface()}
+			result := direct
 			for rows.Next() {
-				scanArgs[0] = vp.Interface()
+				// vp is reused across rows: reflect.Append copies the scalar
+				// value into the slice's backing storage each iteration.
 				err = rows.Scan(scanArgs...)
 				if err != nil {
 					return err
 				}
-				direct.Set(reflect.Append(direct, reflect.Indirect(vp)))
+				result = reflect.Append(result, vp.Elem())
 			}
-			return rows.Err()
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			direct.Set(result)
+			return nil
 		}
 		if base.Kind() != reflect.Struct {
 			return fmt.Errorf("must pass a pointer to a slice of structs, not %s", base.Kind())
@@ -160,34 +166,47 @@ func ScanContext(ctx context.Context, queryer Queryer, dest any, query string, a
 		}
 		scanArgs := make([]any, len(columns))
 		discard := make([]any, len(columns))
-		fieldMap := make(map[int][]int)
+		// Unmapped columns always scan into discard; set once up front so the
+		// per-row loop only has to (re)point the mapped columns.
+		for i := range columns {
+			scanArgs[i] = &discard[i]
+		}
 
-		// 预先计算字段索引
+		// Precompute column -> struct field index mappings once. A slice keeps
+		// iteration cheap and avoids per-row map traversal.
+		type colMapping struct {
+			column int
+			index  []int
+		}
+		var mappings []colMapping
 		for _, field := range fields(base) {
 			if columnIndex := slices.Index(columns, field.name); columnIndex >= 0 {
-				fieldMap[columnIndex] = field.field.Index
+				mappings = append(mappings, colMapping{columnIndex, field.field.Index})
 			}
 		}
+
+		result := direct
 		for rows.Next() {
 			vp = reflect.New(base)
-			for i := range columns {
-				scanArgs[i] = &discard[i]
-			}
-			for columnIndex, fieldIndex := range fieldMap {
-				scanArgs[columnIndex] = vp.Elem().FieldByIndex(fieldIndex).Addr().Interface()
+			elem := vp.Elem()
+			for _, m := range mappings {
+				scanArgs[m.column] = elem.FieldByIndex(m.index).Addr().Interface()
 			}
 			err = rows.Scan(scanArgs...)
 			if err != nil {
 				return err
 			}
-			// append
 			if isPtr {
-				direct.Set(reflect.Append(direct, vp))
+				result = reflect.Append(result, vp)
 			} else {
-				direct.Set(reflect.Append(direct, reflect.Indirect(vp)))
+				result = reflect.Append(result, elem)
 			}
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		direct.Set(result)
+		return nil
 	default:
 		row := queryer.QueryRowContext(ctx, query, args...)
 		return row.Scan(dest)
@@ -205,23 +224,56 @@ func tagLookup(tag reflect.StructTag) string {
 }
 
 func fixQuery(flavor Flavor, query string) string {
-	switch flavor {
-	case MySQL, SQLite:
+	// Only PostgreSQL uses positional $n placeholders; other flavors keep '?'.
+	if flavor != PostgreSQL {
+		return query
+	}
+	// Fast path: nothing to rewrite.
+	if !strings.ContainsRune(query, '?') {
 		return query
 	}
 	builder := acquireStringBuilder()
 	defer releaseStringBuilder(builder)
-	var i, j int
-	for i = strings.IndexRune(query, '?'); i != -1; i = strings.IndexRune(query, '?') {
-		j++
-		builder.WriteString(query[:i])
-		switch flavor {
-		case PostgreSQL:
-			builder.WriteString("$" + strconv.Itoa(j))
+	builder.Grow(len(query) + 8)
+	argNum := 0
+	for i := 0; i < len(query); i++ {
+		c := query[i]
+		switch c {
+		case '\'', '"':
+			// Copy a quoted span (string literal or quoted identifier) verbatim
+			// so a '?' inside it is never treated as a placeholder. Doubled
+			// quotes ('' or "") are in-span escapes, not terminators.
+			quote := c
+			builder.WriteByte(c)
+			i++
+			for i < len(query) {
+				builder.WriteByte(query[i])
+				if query[i] == quote {
+					if i+1 < len(query) && query[i+1] == quote {
+						i++
+						builder.WriteByte(query[i])
+						i++
+						continue
+					}
+					break
+				}
+				i++
+			}
+		case '?':
+			// A doubled '??' is an escaped literal '?' (e.g. PostgreSQL jsonb
+			// operators ?, ?| and ?&), emitted as a single '?'.
+			if i+1 < len(query) && query[i+1] == '?' {
+				builder.WriteByte('?')
+				i++
+				continue
+			}
+			argNum++
+			builder.WriteByte('$')
+			builder.WriteString(strconv.Itoa(argNum))
+		default:
+			builder.WriteByte(c)
 		}
-		query = query[i+1:]
 	}
-	builder.WriteString(query)
 	return builder.String()
 }
 

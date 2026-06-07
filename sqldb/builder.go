@@ -19,7 +19,6 @@ type builder struct {
 	whereBindings   []map[string]any
 	orderBy         []map[string]string
 	groupBy         string
-	startBindingsAt int
 	offset          int64
 	limit           int64
 }
@@ -52,7 +51,6 @@ func (b *builder) Where(column, operator string, value any) *builder {
 
 func (b *builder) Count() (int, error) {
 	b1 := b.Clone()
-	defer b1.Reset()
 	b1.columns = []string{"COUNT(*)"}
 	query, args := b1.buildSelect(), prepareValues(b1.whereBindings)
 	var count int
@@ -113,7 +111,7 @@ func (b *builder) buildClauses() string {
 
 	// build where clause
 	if len(b.whereBindings) > 0 {
-		clauses += composeWhere(b.whereBindings, b.startBindingsAt)
+		clauses += composeWhere(b.whereBindings)
 	}
 
 	if b.groupBy != "" {
@@ -138,30 +136,31 @@ func (b *builder) buildClauses() string {
 }
 
 // composes WHERE clause string for particular query stmt
-func composeWhere(whereBindings []map[string]any, startedAt int) string {
-	where := " WHERE "
+func composeWhere(whereBindings []map[string]any) string {
+	b := acquireStringBuilder()
+	defer releaseStringBuilder(b)
+	b.WriteString(" WHERE ")
 	for _, m := range whereBindings {
 		for k, v := range m {
 			// operand >= $i
 			switch vi := v.(type) {
 			case []any:
 				dataLen := len(vi)
+				b.WriteString(k)
 				if dataLen == 0 {
-					where += k + " (NULL)"
+					b.WriteString(" (NULL)")
 					continue
 				}
-				where += k + " (" + strings.Repeat("?,", dataLen)[:dataLen*2-1] + ")"
+				b.WriteString(" (")
+				b.WriteString(strings.Repeat("?,", dataLen)[:dataLen*2-1])
+				b.WriteByte(')')
 			default:
-				// if strings.Contains(k, sqlOperatorIs) || strings.Contains(k, sqlOperatorBetween) {
-				// 	where += k + " " + vi.(string)
-				// 	break
-				// }
-
-				where += k + " ?"
+				b.WriteString(k)
+				b.WriteString(" ?")
 			}
 		}
 	}
-	return where
+	return b.String()
 }
 
 // composers ORDER BY clause string for particular query stmt
@@ -190,27 +189,20 @@ func prepareValues(values []map[string]any) []any {
 	return vls
 }
 func prepareValue(value any) []any {
-	var values []any
 	switch v := value.(type) {
-	case string:
-		values = append(values, v)
-	case int:
-		values = append(values, v)
-	case float64:
-		values = append(values, v)
-	case int64:
-		values = append(values, v)
-	case uint64:
-		values = append(values, v)
 	case []any:
+		// Flatten slices (e.g. for IN clauses) into individual bind values.
+		values := make([]any, 0, len(v))
 		for _, vi := range v {
 			values = append(values, prepareValue(vi)...)
 		}
-	case nil:
-		values = append(values, nil)
+		return values
+	default:
+		// Pass any other value through unchanged. Whitelisting concrete types
+		// here silently dropped values (bool, int32, time.Time, sql.Null*, ...)
+		// and produced placeholder/argument count mismatches.
+		return []any{value}
 	}
-
-	return values
 }
 
 // prepareBindings prepares slices to split in favor of INSERT sql statement
@@ -291,7 +283,7 @@ func (b *builder) updateMap(data map[string]any) (sql.Result, error) {
 		fields = append(fields, fmt.Sprintf("%s=?", b.flavor.columnQuote(k)))
 		values = append(values, v)
 	}
-	whereClause, whereArgs := composeWhere(b.whereBindings, 1), prepareValues(b.whereBindings)
+	whereClause, whereArgs := composeWhere(b.whereBindings), prepareValues(b.whereBindings)
 
 	query := "UPDATE " + b.flavor.tableQuote("", b.table) + " SET " + strings.Join(fields, ", ") + whereClause
 	values = append(values, whereArgs...)

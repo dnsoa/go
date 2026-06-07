@@ -157,7 +157,8 @@ func (ins *inserter) Args() []any {
 			return nil
 		}
 		argIndex := -1
-		if data.Index(0).Kind() == reflect.Pointer { // First slice element is struct pointers
+		elemIsPtr := data.Index(0).Kind() == reflect.Pointer
+		if elemIsPtr { // First slice element is struct pointers
 			recType = data.Index(0).Elem().Type()
 		} else { // First slice element is struct
 			recType = data.Index(0).Type()
@@ -173,7 +174,7 @@ func (ins *inserter) Args() []any {
 		numBindArgs := numRecs * numFieldsPerRec
 		args = make([]any, numBindArgs)
 		for rowIndex := range data.Len() {
-			if data.Index(0).Kind() == reflect.Pointer {
+			if elemIsPtr {
 				rec = data.Index(rowIndex).Elem() // Cur slice elem is struct pointer, get arg val from ref-element
 			} else {
 				rec = data.Index(rowIndex) // Cur slice elem is struct, can get arg val directly
