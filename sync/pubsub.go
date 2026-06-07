@@ -105,14 +105,13 @@ func (ps *PubSub[T]) Publish(msg T) {
 	ps.msg = msg
 	ps.msgSet = true
 	for sub := range ps.subscribers {
-		s := sub
 		ps.cs.Schedule(func(context.Context) {
 			ps.mu.Lock()
 			defer ps.mu.Unlock()
-			if !ps.subscribers[s] {
+			if !ps.subscribers[sub] {
 				return
 			}
-			s.OnMessage(msg)
+			sub.OnMessage(msg)
 		})
 	}
 }

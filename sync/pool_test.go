@@ -107,6 +107,14 @@ func TestPool_AlwaysCreatesNew(t *testing.T) {
 }
 
 func TestPool_Reuse(t *testing.T) {
+	// sync.Pool makes no guarantee that a Put value is returned by a later
+	// Get ("any item stored in the Pool may be removed automatically at any
+	// time"). The race detector deliberately clears the pool to surface
+	// use-after-Put bugs, so strict reuse cannot be asserted under -race.
+	if raceEnabled {
+		t.Skip("sync.Pool is cleared under the race detector; reuse is not guaranteed")
+	}
+
 	// Ensure the test runs with a single P to avoid sync.Pool per-P cache
 	// causing Put/Get to occur on different Ps and spuriously create a new value.
 	prev := runtime.GOMAXPROCS(1)

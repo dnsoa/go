@@ -55,6 +55,11 @@ func (b *Unbounded[T]) Load() {
 	if b.head < len(b.backlog) {
 		select {
 		case b.c <- b.backlog[b.head]:
+			// Clear the consumed slot so the buffer does not retain a
+			// reference to it (important when T holds pointers/closures,
+			// e.g. the func values used by CallbackSerializer).
+			var zero T
+			b.backlog[b.head] = zero
 			b.head++
 			// Compact the backlog when head has moved significantly
 			if b.head > 16 && b.head > len(b.backlog)/2 {
