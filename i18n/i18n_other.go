@@ -4,15 +4,11 @@ package i18n
 
 import "os"
 
-// Locale returns the value of the LC_ALL environment variable, if set. If not, then it falls back to the value of the
-// LANG environment variable. If that is also not set, then it returns "en_US.UTF-8".
-func Locale() string {
-	locale := os.Getenv("LC_ALL")
-	if locale == "" {
-		locale = os.Getenv("LANG")
-		if locale == "" {
-			locale = "en_US.UTF-8"
-		}
+// sysLocale returns the raw OS locale string (e.g. "en_US.UTF-8") from
+// LC_ALL, falling back to LANG. It may be empty.
+func sysLocale() string {
+	if locale := os.Getenv("LC_ALL"); locale != "" {
+		return locale
 	}
-	return locale
+	return os.Getenv("LANG")
 }

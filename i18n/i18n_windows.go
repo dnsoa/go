@@ -5,16 +5,16 @@ import (
 	"unsafe"
 )
 
-// Locale returns the locale set for the user. If that has not been set, then it falls back to the locale set for the
-// system. If that is also unset, then it return "en_US.UTF-8".
-func Locale() string {
+// sysLocale returns the raw OS locale string (e.g. "en-US") for the user,
+// falling back to the system default. It may be empty.
+func sysLocale() string {
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	proc := kernel32.NewProc("GetUserDefaultLocaleName")
 	buffer := make([]uint16, 128)
 	if ret, _, _ := proc.Call(uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer))); ret == 0 { //nolint:errcheck // ret is the error code
 		proc = kernel32.NewProc("GetSystemDefaultLocaleName")
 		if ret, _, _ = proc.Call(uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer))); ret == 0 { //nolint:errcheck // ret is the error code
-			return "en_US.UTF-8"
+			return ""
 		}
 	}
 	return syscall.UTF16ToString(buffer)
