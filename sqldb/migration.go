@@ -354,7 +354,7 @@ func (m *Migrator) createMigrationsTable(ctx context.Context) error {
 
 		// Ensure a row exists for this service. Use a flavor-specific upsert so
 		// the initial empty version is inserted exactly once.
-		if _, err := tx.ExecContext(ctx, m.upsertServiceSQL(), m.service, ""); err != nil {
+		if _, err := tx.ExecContext(ctx, fixQuery(m.flavor, m.upsertServiceSQL()), m.service, ""); err != nil {
 			return fmt.Errorf("error initializing migration row for service %q: %w", m.service, err)
 		}
 		return nil
@@ -375,7 +375,7 @@ func (m *Migrator) upsertServiceSQL() string {
 // updateVersion sets the current version for the configured service. Uses
 // parameter binding to avoid SQL injection.
 func (m *Migrator) updateVersion(ctx context.Context, tx *sql.Tx, version string) error {
-	_, err := tx.ExecContext(ctx, `update `+m.table+` set version = ? where service = ?`, version, m.service)
+	_, err := tx.ExecContext(ctx, fixQuery(m.flavor, `update `+m.table+` set version = ? where service = ?`), version, m.service)
 	return err
 }
 
@@ -385,7 +385,7 @@ func (m *Migrator) updateVersion(ctx context.Context, tx *sql.Tx, version string
 // the empty string so callers treat it as the initial version.
 func (m *Migrator) getCurrentVersion(ctx context.Context) (string, error) {
 	var version string
-	err := m.db.QueryRowContext(ctx, `select version from `+m.table+` where service = ?`, m.service).Scan(&version)
+	err := m.db.QueryRowContext(ctx, fixQuery(m.flavor, `select version from `+m.table+` where service = ?`), m.service).Scan(&version)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
