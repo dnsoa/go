@@ -1,0 +1,1 @@
+CREATE TABLE users_a (id INTEGER PRIMARY KEY, name TEXT);

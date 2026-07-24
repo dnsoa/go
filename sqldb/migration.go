@@ -13,6 +13,7 @@ var (
 	migrationUpMatcher    = regexp.MustCompile(`^([\w-]+)\.up\.sql$`)
 	migrationDownMatcher  = regexp.MustCompile(`^([\w-]+)\.down\.sql$`)
 	migrationTableMatcher = regexp.MustCompile(`^[\w.]+$`)
+	migrationNameMatcher  = regexp.MustCompile(`^[\w.-]+$`)
 )
 
 // MigrationCallback is called before or after each migration inside the same transaction.
@@ -22,9 +23,10 @@ type MigrationCallback func(ctx context.Context, tx *sql.Tx, version string) err
 type MigrationOption func(*migrationOptions)
 
 type migrationOptions struct {
-	after  MigrationCallback
-	before MigrationCallback
-	table  string
+	after   MigrationCallback
+	before  MigrationCallback
+	table   string
+	service string
 }
 
 // WithMigrationTable sets the migration version table name.
@@ -32,6 +34,23 @@ type migrationOptions struct {
 func WithMigrationTable(table string) MigrationOption {
 	return func(opts *migrationOptions) {
 		opts.table = table
+	}
+}
+
+// WithMigrationService sets the namespace/service name so that multiple
+// services sharing the same database keep independent migration histories.
+//
+// The migrations table stores one row per service (keyed by the service name),
+// and each service tracks its own version independently. This avoids conflicts
+// when several microservices share a single database.
+//
+// When unset, the service name defaults to "default", so a single-service
+// application still works without any configuration.
+//
+// The service name must match ^[\w.-]+$.
+func WithMigrationService(service string) MigrationOption {
+	return func(opts *migrationOptions) {
+		opts.service = service
 	}
 }
 
@@ -50,11 +69,13 @@ func WithMigrationAfter(after MigrationCallback) MigrationOption {
 }
 
 type Migrator struct {
-	after  MigrationCallback
-	before MigrationCallback
-	db     *sql.DB
-	fs     fs.FS
-	table  string
+	after   MigrationCallback
+	before  MigrationCallback
+	db      *sql.DB
+	fs      fs.FS
+	table   string
+	service string
+	flavor  Flavor
 }
 
 // NewMigrator creates a migration runner bound to this DB.
@@ -72,17 +93,28 @@ func (db *DB) NewMigrator(fsys fs.FS, opts ...MigrationOption) (*Migrator, error
 		return nil, fmt.Errorf("illegal migration table name %q, must match %s", options.table, migrationTableMatcher.String())
 	}
 
+	if options.service != "" && !migrationNameMatcher.MatchString(options.service) {
+		return nil, fmt.Errorf("illegal migration service name %q, must match %s", options.service, migrationNameMatcher.String())
+	}
+
 	table := options.table
 	if table == "" {
 		table = "migrations"
 	}
 
+	service := options.service
+	if service == "" {
+		service = defaultMigrationService
+	}
+
 	return &Migrator{
-		after:  options.after,
-		before: options.before,
-		db:     db.DB,
-		fs:     fsys,
-		table:  table,
+		after:   options.after,
+		before:  options.before,
+		db:      db.DB,
+		fs:      fsys,
+		table:   table,
+		service: service,
+		flavor:  db.Flavor,
 	}, nil
 }
 
@@ -271,7 +303,7 @@ func (m *Migrator) apply(ctx context.Context, name, version string) error {
 			}
 		}
 
-		if _, err := tx.ExecContext(ctx, `update `+m.table+` set version = '`+version+`'`); err != nil {
+		if err := m.updateVersion(ctx, tx, version); err != nil {
 			return fmt.Errorf("error updating version to %v: %w", version, err)
 		}
 		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
@@ -304,31 +336,60 @@ func (m *Migrator) getFilenames(matcher *regexp.Regexp) ([]string, error) {
 	return names, nil
 }
 
-// createMigrationsTable if it does not exist already, and insert the empty version if it's empty.
+// defaultMigrationService is used when no service namespace is configured via
+// WithMigrationService. It keeps a single shared history in the multi-row
+// migrations table, equivalent to the old global-version behavior.
+const defaultMigrationService = "default"
+
+// createMigrationsTable creates the migrations table if it does not exist yet
+// and ensures a row exists for the configured service.
+//
+// The table always uses the multi-row (service, version) layout so that
+// multiple services sharing the same database keep independent histories.
 func (m *Migrator) createMigrationsTable(ctx context.Context) error {
 	return m.inTransaction(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `create table if not exists `+m.table+` (version text not null)`); err != nil {
+		if _, err := tx.ExecContext(ctx, `create table if not exists `+m.table+` (service text not null, version text not null, primary key (service))`); err != nil {
 			return fmt.Errorf("error creating migrations table %v: %w", m.table, err)
 		}
 
-		var exists bool
-		if err := tx.QueryRowContext(ctx, `select exists (select * from `+m.table+`)`).Scan(&exists); err != nil {
-			return err
-		}
-
-		if !exists {
-			if _, err := tx.ExecContext(ctx, `insert into `+m.table+` values ('')`); err != nil {
-				return err
-			}
+		// Ensure a row exists for this service. Use a flavor-specific upsert so
+		// the initial empty version is inserted exactly once.
+		if _, err := tx.ExecContext(ctx, m.upsertServiceSQL(), m.service, ""); err != nil {
+			return fmt.Errorf("error initializing migration row for service %q: %w", m.service, err)
 		}
 		return nil
 	})
 }
 
+// upsertServiceSQL returns a flavor-specific statement that inserts a
+// (service, version) row unless the service already exists.
+func (m *Migrator) upsertServiceSQL() string {
+	switch m.flavor {
+	case MySQL:
+		return `insert into ` + m.table + ` (service, version) values (?, ?) on duplicate key update service = service`
+	default: // PostgreSQL and SQLite both support ON CONFLICT.
+		return `insert into ` + m.table + ` (service, version) values (?, ?) on conflict (service) do nothing`
+	}
+}
+
+// updateVersion sets the current version for the configured service. Uses
+// parameter binding to avoid SQL injection.
+func (m *Migrator) updateVersion(ctx context.Context, tx *sql.Tx, version string) error {
+	_, err := tx.ExecContext(ctx, `update `+m.table+` set version = ? where service = ?`, version, m.service)
+	return err
+}
+
 // getCurrentVersion from the migrations table.
+//
+// When no row exists yet (e.g. a service that has never migrated), it returns
+// the empty string so callers treat it as the initial version.
 func (m *Migrator) getCurrentVersion(ctx context.Context) (string, error) {
 	var version string
-	if err := m.db.QueryRowContext(ctx, `select version from `+m.table+``).Scan(&version); err != nil {
+	err := m.db.QueryRowContext(ctx, `select version from `+m.table+` where service = ?`, m.service).Scan(&version)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
 		return "", fmt.Errorf("error getting current migration version: %w", err)
 	}
 	return version, nil

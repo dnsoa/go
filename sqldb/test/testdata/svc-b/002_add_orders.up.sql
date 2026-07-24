@@ -1,0 +1,1 @@
+CREATE TABLE orders_b (id INTEGER PRIMARY KEY, status TEXT);

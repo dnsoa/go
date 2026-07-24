@@ -1,0 +1,1 @@
+CREATE TABLE users_b (id INTEGER PRIMARY KEY, code TEXT);
