@@ -69,6 +69,42 @@ func TestGet(t *testing.T) {
 	r.Equal(time.Second*3, dur)
 }
 
+func TestReadMap(t *testing.T) {
+	r := assert.New(t)
+
+	str := `# comment
+PLAIN=value
+DOUBLE="quoted-value"
+SINGLE='single-value'
+EXPORTED=exported-value
+WITH_COMMENT=abc # inline comment
+`
+	envFile := writeTempEnvFile(t, str)
+
+	m, err := ReadMap(envFile)
+	r.NoError(err)
+	r.Equal("value", m["PLAIN"])
+	// Quotes are stripped, matching Load's behavior.
+	r.Equal("quoted-value", m["DOUBLE"])
+	r.Equal("single-value", m["SINGLE"])
+	r.Equal("exported-value", m["EXPORTED"])
+	// Inline comments are trimmed.
+	r.Equal("abc", m["WITH_COMMENT"])
+
+	// ReadMap must not touch the process environment: none of these keys
+	// leak into os.Environ.
+	for k := range m {
+		if _, ok := os.LookupEnv(k); ok {
+			t.Errorf("ReadMap leaked %q into the process environment", k)
+		}
+	}
+
+	// A missing file returns an error, not an empty map silently.
+	if _, err := ReadMap(filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Error("ReadMap returned nil error for a missing file")
+	}
+}
+
 func TestLoad(t *testing.T) {
 	r := assert.New(t)
 

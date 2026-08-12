@@ -139,6 +139,16 @@ func Duration(key string, defaultValue time.Duration) (time.Duration, error) {
 	return time.ParseDuration(v)
 }
 
+// ReadMap parses filename as a .env file and returns its key/value pairs
+// without modifying the process environment. It applies the same parsing as
+// Load -- quote stripping, escape handling, export prefix, and variable
+// expansion against the live environment -- so callers see the same resolved
+// values Load would set. Useful for tools that inspect a .env file's contents
+// without coupling to or polluting os.Environ.
+func ReadMap(filename string) (map[string]string, error) {
+	return readFile(filename)
+}
+
 // Load loads environment variables from .env file(s).
 // It searches for .env file in the current directory by default.
 // If multiple files are provided, they will be loaded in order.
