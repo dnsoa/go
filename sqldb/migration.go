@@ -346,12 +346,31 @@ const defaultMigrationService = "default"
 //
 // The table always uses the multi-row (service, version) layout so that
 // multiple services sharing the same database keep independent histories.
+//
+// Databases created before the per-service layout was introduced have a
+// single-column `(version)` table. `create table if not exists` is a no-op on
+// them, so without the upgrade step below every Open() on such a database fails
+// with `column "service" of relation "migrations" does not exist` — the schema
+// is fine, only the bookkeeping table is stale. Self-heal instead of requiring
+// every existing deployment to be patched by hand.
 func (m *Migrator) createMigrationsTable(ctx context.Context) error {
-	return m.inTransaction(ctx, func(tx *sql.Tx) error {
+	if err := m.inTransaction(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `create table if not exists `+m.table+` (service text not null, version text not null, primary key (service))`); err != nil {
 			return fmt.Errorf("error creating migrations table %v: %w", m.table, err)
 		}
+		return nil
+	}); err != nil {
+		return err
+	}
 
+	// Runs outside a transaction on purpose: the probe below is *expected* to
+	// fail on legacy tables, and on PostgreSQL a failed statement poisons the
+	// surrounding transaction, so probe-then-ALTER cannot share one.
+	if err := m.upgradeLegacyMigrationsTable(ctx); err != nil {
+		return err
+	}
+
+	return m.inTransaction(ctx, func(tx *sql.Tx) error {
 		// Ensure a row exists for this service. Use a flavor-specific upsert so
 		// the initial empty version is inserted exactly once.
 		if _, err := tx.ExecContext(ctx, fixQuery(m.flavor, m.upsertServiceSQL()), m.service, ""); err != nil {
@@ -359,6 +378,35 @@ func (m *Migrator) createMigrationsTable(ctx context.Context) error {
 		}
 		return nil
 	})
+}
+
+// upgradeLegacyMigrationsTable adds the `service` column to a pre-per-service
+// migrations table and adopts the existing row into the default service.
+//
+// The existing version row is preserved deliberately: dropping and recreating
+// the table would make the migrator replay every migration against a database
+// that already has them — far worse than a stale bookkeeping column.
+//
+// A probing SELECT is used rather than a catalog query so one code path covers
+// PostgreSQL, MySQL and SQLite.
+func (m *Migrator) upgradeLegacyMigrationsTable(ctx context.Context) error {
+	if _, err := m.db.ExecContext(ctx, `select service from `+m.table+` where 1=0`); err == nil {
+		return nil // already has the column
+	}
+	if _, err := m.db.ExecContext(ctx,
+		`alter table `+m.table+` add column service text not null default '`+defaultMigrationService+`'`); err != nil {
+		return fmt.Errorf("error upgrading legacy migrations table %v: %w", m.table, err)
+	}
+	// The primary key can only be added once the column exists. A legacy table
+	// has at most one row, so adopting it into the default service cannot
+	// collide. Failure here is not fatal: without the PK the upsert below
+	// degrades to "insert if empty", which is still correct for a single
+	// service — and a hard failure would lock out the very deployments this
+	// path exists to rescue.
+	if _, err := m.db.ExecContext(ctx, `alter table `+m.table+` add primary key (service)`); err != nil {
+		_ = err
+	}
+	return nil
 }
 
 // upsertServiceSQL returns a flavor-specific statement that inserts a
