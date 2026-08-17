@@ -169,6 +169,29 @@ func TestMigration_DefaultServiceIsolatesFromNamedService(t *testing.T) {
 	r.Equal("002_add_email", migrationVersion(t, db, "default"))
 }
 
+// TestMigration_LegacyTableUpgrade verifies that a database holding a legacy
+// single-column (version) migrations table is upgraded in place: the existing
+// row is adopted into the default service and migrations are not replayed.
+func TestMigration_LegacyTableUpgrade(t *testing.T) {
+	r := assert.New(t)
+	ctx := context.Background()
+	db := newMemoryDB(t)
+
+	// Simulate a pre-per-service database: already at the latest version.
+	_, err := db.Exec("CREATE TABLE migrations (version text not null)")
+	r.NoError(err)
+	_, err = db.Exec("INSERT INTO migrations (version) VALUES ('002_add_email')")
+	r.NoError(err)
+
+	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
+	r.Equal("002_add_email", migrationVersion(t, db, "default"))
+
+	// The legacy row was adopted, not duplicated.
+	var count int
+	r.NoError(db.QueryRow("SELECT count(*) FROM migrations").Scan(&count))
+	r.Equal(1, count)
+}
+
 // TestMigration_MigrateToWithService verifies targeted migration to a specific
 // version works with service namespaces.
 func TestMigration_MigrateToWithService(t *testing.T) {

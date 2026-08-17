@@ -393,6 +393,23 @@ func (m *Migrator) upgradeLegacyMigrationsTable(ctx context.Context) error {
 	if _, err := m.db.ExecContext(ctx, `select service from `+m.table+` where 1=0`); err == nil {
 		return nil // already has the column
 	}
+	// SQLite cannot ALTER TABLE ... ADD PRIMARY KEY, so the table is rebuilt
+	// there; MySQL and PostgreSQL get the cheaper in-place ALTER pair. Either
+	// way the existing row is preserved and adopted into the default service.
+	if m.flavor == SQLite {
+		stmts := []string{
+			`alter table ` + m.table + ` rename to ` + m.table + `_legacy`,
+			`create table ` + m.table + ` (service text not null, version text not null, primary key (service))`,
+			`insert into ` + m.table + ` (service, version) select '` + defaultMigrationService + `', version from ` + m.table + `_legacy`,
+			`drop table ` + m.table + `_legacy`,
+		}
+		for _, stmt := range stmts {
+			if _, err := m.db.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("error upgrading legacy migrations table %v: %w", m.table, err)
+			}
+		}
+		return nil
+	}
 	if _, err := m.db.ExecContext(ctx,
 		`alter table `+m.table+` add column service text not null default '`+defaultMigrationService+`'`); err != nil {
 		return fmt.Errorf("error upgrading legacy migrations table %v: %w", m.table, err)
