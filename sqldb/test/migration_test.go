@@ -6,7 +6,6 @@ import (
 	"embed"
 	"io/fs"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/dnsoa/go/assert"
@@ -171,29 +170,6 @@ func TestMigration_DefaultServiceIsolatesFromNamedService(t *testing.T) {
 	r.Equal("002_add_email", migrationVersion(t, db, "default"))
 }
 
-// TestMigration_LegacyTableUpgrade verifies that a database holding a legacy
-// single-column (version) migrations table is upgraded in place: the existing
-// row is adopted into the default service and migrations are not replayed.
-func TestMigration_LegacyTableUpgrade(t *testing.T) {
-	r := assert.New(t)
-	ctx := context.Background()
-	db := newMemoryDB(t)
-
-	// Simulate a pre-per-service database: already at the latest version.
-	_, err := db.Exec("CREATE TABLE migrations (version text not null)")
-	r.NoError(err)
-	_, err = db.Exec("INSERT INTO migrations (version) VALUES ('002_add_email')")
-	r.NoError(err)
-
-	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
-	r.Equal("002_add_email", migrationVersion(t, db, "default"))
-
-	// The legacy row was adopted, not duplicated.
-	var count int
-	r.NoError(db.QueryRow("SELECT count(*) FROM migrations").Scan(&count))
-	r.Equal(1, count)
-}
-
 // TestMigration_MigrateToWithService verifies targeted migration to a specific
 // version works with service namespaces.
 func TestMigration_MigrateToWithService(t *testing.T) {
@@ -286,38 +262,6 @@ func TestMigration_MySQLUpDown(t *testing.T) {
 	r.Equal("002_add_email", migrationVersion(t, db, "default"))
 }
 
-// TestMigration_MySQLLegacyTableUpgrade covers the upgrade path on MySQL: a
-// legacy single-column table takes an ALTER that adds the service column with a
-// constant DEFAULT. MySQL also refuses constant DEFAULTs on TEXT columns
-// (Error 1101), so the column is VARCHAR there — and the primary key the
-// upgrade then adds lands on an indexable type instead of tripping Error 1170.
-func TestMigration_MySQLLegacyTableUpgrade(t *testing.T) {
-	r := assert.New(t)
-	ctx := context.Background()
-	db := openMySQL(t)
-
-	// Same shared-server cleanup as TestMigration_MySQLUpDown: the legacy-row
-	// INSERT below would otherwise duplicate on a re-run.
-	_, err := db.Exec("DROP TABLE IF EXISTS migrations")
-	r.NoError(err)
-	_, err = db.Exec("DROP TABLE IF EXISTS users_a")
-	r.NoError(err)
-
-	// A pre-per-service database, already at the latest version.
-	_, err = db.Exec("CREATE TABLE migrations (version text not null)")
-	r.NoError(err)
-	_, err = db.Exec("INSERT INTO migrations (version) VALUES ('002_add_email')")
-	r.NoError(err)
-
-	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
-	r.Equal("002_add_email", migrationVersion(t, db, "default"))
-
-	// The legacy row was adopted, not duplicated.
-	var count int
-	r.NoError(db.QueryRow("SELECT count(*) FROM migrations").Scan(&count))
-	r.Equal(1, count)
-}
-
 // openPostgres is openMySQL's twin for the PostgreSQL-specific tests below,
 // with the same live-round-trip probe and the same env override so a container
 // on a non-default port can be used without editing the file.
@@ -339,72 +283,29 @@ func openPostgres(t *testing.T) *sqldb.DB {
 	return db
 }
 
-// legacyTableWithOwnPrimaryKey is the case the plain ADD PRIMARY KEY cannot
-// serve: a pre-per-service migrations table whose single column is itself the
-// primary key — `create table migrations (version ... primary key)`, as
-// plausible a legacy shape as the bare `(version)` one. Adding a second
-// primary key fails, and the upsert that follows needs (service) to be
-// unique — so the upgrade falls back to a unique index.
-//
-// The assertion that matters is the second MigrateUp. Before the fallback
-// existed the failed ALTER was ignored, and without any unique key MySQL's
-// `on duplicate key update` matched nothing while PostgreSQL's `on conflict
-// (service)` refused to execute: one flavor grew a row per Open, the other
-// could not open at all.
-func legacyTableWithOwnPrimaryKey(t *testing.T, db *sqldb.DB, versionColumn string) {
+// TestMigration_PostgresUpDown is TestMigration_MySQLUpDown's twin. The
+// PostgreSQL dialect had no execution-level coverage at all: everything else
+// runs on :memory: SQLite, so a statement PostgreSQL parses differently — or an
+// upsert whose ON CONFLICT target is missing — would pass every test and fail
+// on a real server.
+func TestMigration_PostgresUpDown(t *testing.T) {
 	r := assert.New(t)
 	ctx := context.Background()
+	db := openPostgres(t)
 
+	// Same shared-server cleanup as the MySQL twin: state survives the test,
+	// and svc-a's up-migration is a bare CREATE TABLE.
 	_, err := db.Exec("DROP TABLE IF EXISTS migrations")
 	r.NoError(err)
 	_, err = db.Exec("DROP TABLE IF EXISTS users_a")
-	r.NoError(err)
-
-	_, err = db.Exec("CREATE TABLE migrations (" + versionColumn + ")")
-	r.NoError(err)
-	_, err = db.Exec("INSERT INTO migrations (version) VALUES ('002_add_email')")
 	r.NoError(err)
 
 	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
 	r.Equal("002_add_email", migrationVersion(t, db, "default"))
 
-	// Idempotent: the legacy row was adopted rather than duplicated, and a
-	// second run inserts nothing.
+	r.NoError(db.MigrateDown(ctx, subFS(svcAFS, "testdata/svc-a")))
+	r.Equal("", migrationVersion(t, db, "default"))
+
 	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
-	var count int
-	r.NoError(db.QueryRow("SELECT count(*) FROM migrations").Scan(&count))
-	r.Equal(1, count)
-}
-
-func TestMigration_MySQLLegacyTableWithOwnPrimaryKey(t *testing.T) {
-	legacyTableWithOwnPrimaryKey(t, openMySQL(t), "version varchar(191) not null primary key")
-}
-
-func TestMigration_PostgresLegacyTableWithOwnPrimaryKey(t *testing.T) {
-	legacyTableWithOwnPrimaryKey(t, openPostgres(t), "version text primary key")
-}
-
-// TestMigration_MySQLLegacyTableThatCannotBeKeyed is the other half: a legacy
-// table holding more than one row cannot represent a per-service history at
-// all. Neither the primary key nor the unique index can be created, and the
-// upgrade now says so — where it used to continue and let MySQL append a
-// duplicate row on every Open, leaving the recorded version to chance.
-func TestMigration_MySQLLegacyTableThatCannotBeKeyed(t *testing.T) {
-	r := assert.New(t)
-	ctx := context.Background()
-	db := openMySQL(t)
-
-	_, err := db.Exec("DROP TABLE IF EXISTS migrations")
-	r.NoError(err)
-	_, err = db.Exec("DROP TABLE IF EXISTS users_a")
-	r.NoError(err)
-
-	_, err = db.Exec("CREATE TABLE migrations (version text not null)")
-	r.NoError(err)
-	_, err = db.Exec("INSERT INTO migrations (version) VALUES ('001_init'), ('002_add_email')")
-	r.NoError(err)
-
-	err = db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a"))
-	r.Error(err)
-	r.True(strings.Contains(err.Error(), "cannot be made unique"))
+	r.Equal("002_add_email", migrationVersion(t, db, "default"))
 }

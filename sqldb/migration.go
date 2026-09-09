@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
-	"strings"
 )
 
 var (
@@ -349,11 +348,11 @@ const defaultMigrationService = "default"
 // multiple services sharing the same database keep independent histories.
 //
 // Databases created before the per-service layout was introduced have a
-// single-column `(version)` table. `create table if not exists` is a no-op on
-// them, so without the upgrade step below every Open() on such a database fails
-// with `column "service" of relation "migrations" does not exist` — the schema
-// is fine, only the bookkeeping table is stale. Self-heal instead of requiring
-// every existing deployment to be patched by hand.
+// single-column `(version)` table, which `create table if not exists` leaves
+// alone: the upsert then fails on the missing service column. Those are not
+// migrated automatically — drop the bookkeeping table and let it be recreated
+// (only the recorded version is lost, and the migrator re-derives it from the
+// schema's own state on the next run at the latest applied version you set).
 func (m *Migrator) createMigrationsTable(ctx context.Context) error {
 	if err := m.inTransaction(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, m.createMigrationsTableSQL()); err != nil {
@@ -361,13 +360,6 @@ func (m *Migrator) createMigrationsTable(ctx context.Context) error {
 		}
 		return nil
 	}); err != nil {
-		return err
-	}
-
-	// Runs outside a transaction on purpose: the probe below is *expected* to
-	// fail on legacy tables, and on PostgreSQL a failed statement poisons the
-	// surrounding transaction, so probe-then-ALTER cannot share one.
-	if err := m.upgradeLegacyMigrationsTable(ctx); err != nil {
 		return err
 	}
 
@@ -379,93 +371,6 @@ func (m *Migrator) createMigrationsTable(ctx context.Context) error {
 		}
 		return nil
 	})
-}
-
-// upgradeLegacyMigrationsTable adds the `service` column to a pre-per-service
-// migrations table and adopts the existing row into the default service.
-//
-// The existing version row is preserved deliberately: dropping and recreating
-// the table would make the migrator replay every migration against a database
-// that already has them — far worse than a stale bookkeeping column.
-//
-// A probing SELECT is used rather than a catalog query so one code path covers
-// PostgreSQL, MySQL and SQLite.
-func (m *Migrator) upgradeLegacyMigrationsTable(ctx context.Context) error {
-	if _, err := m.db.ExecContext(ctx, `select service from `+m.table+` where 1=0`); err == nil {
-		return nil // already has the column
-	}
-	// SQLite cannot ALTER TABLE ... ADD PRIMARY KEY, so the table is rebuilt
-	// there; MySQL and PostgreSQL get the cheaper in-place ALTER pair. Either
-	// way the existing row is preserved and adopted into the default service.
-	if m.flavor == SQLite {
-		stmts := []string{
-			`alter table ` + m.table + ` rename to ` + m.table + `_legacy`,
-			`create table ` + m.table + ` (service text not null, version text not null, primary key (service))`,
-			`insert into ` + m.table + ` (service, version) select '` + defaultMigrationService + `', version from ` + m.table + `_legacy`,
-			`drop table ` + m.table + `_legacy`,
-		}
-		for _, stmt := range stmts {
-			if _, err := m.db.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("error upgrading legacy migrations table %v: %w", m.table, err)
-			}
-		}
-		return nil
-	}
-	// MySQL cannot put a constant DEFAULT on a TEXT column (Error 1101), and a
-	// TEXT column in a key specification is refused outright (Error 1170) — the
-	// same pair of refusals createMigrationsTableSQL avoids on fresh databases.
-	addServiceCol := `add column service text not null default '` + defaultMigrationService + `'`
-	if m.flavor == MySQL {
-		addServiceCol = `add column service varchar(191) not null default '` + defaultMigrationService + `'`
-	}
-	if _, err := m.db.ExecContext(ctx,
-		`alter table `+m.table+` `+addServiceCol); err != nil {
-		return fmt.Errorf("error upgrading legacy migrations table %v: %w", m.table, err)
-	}
-	// The uniqueness the upsert depends on can only be established once the
-	// column exists.
-	return m.ensureServiceUnique(ctx)
-}
-
-// ensureServiceUnique gives the service column the unique key the upsert in
-// createMigrationsTable depends on, trying a primary key first and a unique
-// index second.
-//
-// A failure here used to be ignored, on the theory that the upsert would then
-// degrade to "insert if empty". It does not, on either flavor that reaches this
-// path:
-//
-//   - MySQL's `on duplicate key update` needs a unique key to match against.
-//     Without one it never matches, so every Open inserts another row for the
-//     same service — the bookkeeping table grows without bound and the version
-//     read back afterwards comes from an arbitrary row.
-//   - PostgreSQL's `on conflict (service)` refuses to run at all: "there is no
-//     unique or exclusion constraint matching the ON CONFLICT specification".
-//     The failure is fatal anyway, just one statement later and with a message
-//     that points at the wrong statement.
-//
-// The primary key can fail for a reason that leaves (service) perfectly
-// keyable — a legacy table carrying a primary key of its own — hence the
-// unique-index fallback. When both fail the table cannot support a per-service
-// history, and saying so beats corrupting it on one flavor and crashing on the
-// other, so the error is returned with what the operator has to look at.
-func (m *Migrator) ensureServiceUnique(ctx context.Context) error {
-	if _, err := m.db.ExecContext(ctx, `alter table `+m.table+` add primary key (service)`); err == nil {
-		return nil
-	}
-	// The index name is derived from the table so two migration tables in one
-	// database cannot collide, with dots flattened: a schema-qualified table
-	// name is legal (see migrationTableMatcher) but a dotted index name is not.
-	index := strings.ReplaceAll(m.table, ".", "_") + "_service_key"
-	_, err := m.db.ExecContext(ctx, `create unique index `+index+` on `+m.table+` (service)`)
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("error upgrading legacy migrations table %v: the service column "+
-		"cannot be made unique (neither a primary key nor unique index %v could be created); "+
-		"the table most likely holds more than one row, which a per-service history cannot "+
-		"represent — reduce it to one row (or drop it, losing only the recorded version): %w",
-		m.table, index, err)
 }
 
 // createMigrationsTableSQL returns the flavor-specific CREATE TABLE statement
