@@ -355,7 +355,7 @@ const defaultMigrationService = "default"
 // every existing deployment to be patched by hand.
 func (m *Migrator) createMigrationsTable(ctx context.Context) error {
 	if err := m.inTransaction(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `create table if not exists `+m.table+` (service text not null, version text not null, primary key (service))`); err != nil {
+		if _, err := tx.ExecContext(ctx, m.createMigrationsTableSQL()); err != nil {
 			return fmt.Errorf("error creating migrations table %v: %w", m.table, err)
 		}
 		return nil
@@ -410,8 +410,15 @@ func (m *Migrator) upgradeLegacyMigrationsTable(ctx context.Context) error {
 		}
 		return nil
 	}
+	// MySQL cannot put a constant DEFAULT on a TEXT column (Error 1101), and a
+	// TEXT column in a key specification is refused outright (Error 1170) — the
+	// same pair of refusals createMigrationsTableSQL avoids on fresh databases.
+	addServiceCol := `add column service text not null default '` + defaultMigrationService + `'`
+	if m.flavor == MySQL {
+		addServiceCol = `add column service varchar(191) not null default '` + defaultMigrationService + `'`
+	}
 	if _, err := m.db.ExecContext(ctx,
-		`alter table `+m.table+` add column service text not null default '`+defaultMigrationService+`'`); err != nil {
+		`alter table `+m.table+` `+addServiceCol); err != nil {
 		return fmt.Errorf("error upgrading legacy migrations table %v: %w", m.table, err)
 	}
 	// The primary key can only be added once the column exists. A legacy table
@@ -424,6 +431,22 @@ func (m *Migrator) upgradeLegacyMigrationsTable(ctx context.Context) error {
 		_ = err
 	}
 	return nil
+}
+
+// createMigrationsTableSQL returns the flavor-specific CREATE TABLE statement
+// for the bookkeeping table.
+//
+// MySQL refuses a TEXT column in a key specification — "Error 1170 (42000):
+// BLOB/TEXT column 'service' used in key specification without a key length" —
+// so the indexed column is VARCHAR(191) there: the longest single-column index
+// that is safe under utf8mb4 on every row format. PostgreSQL and SQLite keep
+// TEXT, which cannot overflow a service name anyway.
+func (m *Migrator) createMigrationsTableSQL() string {
+	cols := `(service text not null, version text not null, primary key (service))`
+	if m.flavor == MySQL {
+		cols = `(service varchar(191) not null, version varchar(191) not null, primary key (service))`
+	}
+	return `create table if not exists ` + m.table + ` ` + cols
 }
 
 // upsertServiceSQL returns a flavor-specific statement that inserts a

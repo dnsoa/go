@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"io/fs"
+	"os"
 	"testing"
 
 	"github.com/dnsoa/go/assert"
@@ -224,4 +225,94 @@ func TestMigration_RejectIllegalServiceName(t *testing.T) {
 	// A valid name is accepted.
 	_, err = db.NewMigrator(subFS(svcAFS, "testdata/svc-a"), sqldb.WithMigrationService("my.service-1"))
 	r.NoError(err)
+}
+
+// openMySQL returns a live MySQL handle for the dialect-specific tests below,
+// skipping when no server is reachable — the same contract db_test.go's mysql
+// subtests use. MYSQL_TEST_DSN overrides the default DSN so CI (or a local
+// container with different credentials) can point the suite at its server.
+//
+// sqldb.Open is lazy — it validates the DSN shape, not the server — so the
+// availability probe has to be a real round trip. Otherwise a machine that
+// happens to run MySQL on 3306 with different credentials turns the skip into
+// an Error 1045 failure.
+func openMySQL(t *testing.T) *sqldb.DB {
+	t.Helper()
+	dsn := os.Getenv("MYSQL_TEST_DSN")
+	if dsn == "" {
+		dsn = "root:admin@tcp(127.0.0.1:3306)/test"
+	}
+	db, err := sqldb.Open("mysql", dsn)
+	if err != nil {
+		t.Skip("MySQL database not available, skipping test")
+	}
+	if _, err := db.Exec("SELECT 1"); err != nil {
+		_ = db.Close()
+		t.Skip("MySQL database not available, skipping test")
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+// TestMigration_MySQLUpDown is the Error 1170 regression: MySQL refuses a TEXT
+// column in a key specification ("BLOB/TEXT column 'service' used in key
+// specification without a key length"), so on a fresh database the very first
+// MigrateUp used to fail while creating the bookkeeping table itself. The
+// dialect-specific DDL aside, the flow must behave exactly as on SQLite: up
+// records the version, down rewinds it to "" and removes the schema, and the
+// pair is reversible.
+func TestMigration_MySQLUpDown(t *testing.T) {
+	r := assert.New(t)
+	ctx := context.Background()
+	db := openMySQL(t)
+
+	// The MySQL tests share one server (and unlike :memory:, state survives the
+	// test), and svc-a's up-migration is a bare CREATE TABLE — so both the
+	// bookkeeping table and the schema it tracks have to go, or the next run
+	// fails with "users_a already exists" and looks like a migrator bug.
+	_, err := db.Exec("DROP TABLE IF EXISTS migrations")
+	r.NoError(err)
+	_, err = db.Exec("DROP TABLE IF EXISTS users_a")
+	r.NoError(err)
+
+	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
+	r.Equal("002_add_email", migrationVersion(t, db, "default"))
+
+	r.NoError(db.MigrateDown(ctx, subFS(svcAFS, "testdata/svc-a")))
+	r.Equal("", migrationVersion(t, db, "default"))
+
+	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
+	r.Equal("002_add_email", migrationVersion(t, db, "default"))
+}
+
+// TestMigration_MySQLLegacyTableUpgrade covers the upgrade path on MySQL: a
+// legacy single-column table takes an ALTER that adds the service column with a
+// constant DEFAULT. MySQL also refuses constant DEFAULTs on TEXT columns
+// (Error 1101), so the column is VARCHAR there — and the primary key the
+// upgrade then adds lands on an indexable type instead of tripping Error 1170.
+func TestMigration_MySQLLegacyTableUpgrade(t *testing.T) {
+	r := assert.New(t)
+	ctx := context.Background()
+	db := openMySQL(t)
+
+	// Same shared-server cleanup as TestMigration_MySQLUpDown: the legacy-row
+	// INSERT below would otherwise duplicate on a re-run.
+	_, err := db.Exec("DROP TABLE IF EXISTS migrations")
+	r.NoError(err)
+	_, err = db.Exec("DROP TABLE IF EXISTS users_a")
+	r.NoError(err)
+
+	// A pre-per-service database, already at the latest version.
+	_, err = db.Exec("CREATE TABLE migrations (version text not null)")
+	r.NoError(err)
+	_, err = db.Exec("INSERT INTO migrations (version) VALUES ('002_add_email')")
+	r.NoError(err)
+
+	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
+	r.Equal("002_add_email", migrationVersion(t, db, "default"))
+
+	// The legacy row was adopted, not duplicated.
+	var count int
+	r.NoError(db.QueryRow("SELECT count(*) FROM migrations").Scan(&count))
+	r.Equal(1, count)
 }
