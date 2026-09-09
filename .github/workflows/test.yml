@@ -15,13 +15,20 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
+      # Every module is tested even when one fails, and the step still fails if
+      # any did. The loop runs under `bash -e`, so an unguarded failure used to
+      # abort it: one flaky test in an early module meant every module after it
+      # was silently never tested.
       - name: Run coverage
         run: |
+          status=0
           for mod in $(find . -name 'go.mod' -not -path './.git/*'); do
             dir=$(dirname "$mod")
-            echo "Testing $dir"
-            (cd "$dir" && go test -race -coverprofile="coverage.txt" -covermode=atomic "./...")
+            echo "::group::Testing $dir"
+            (cd "$dir" && go test -race -coverprofile="coverage.txt" -covermode=atomic "./...") || status=1
+            echo "::endgroup::"
           done
+          exit $status
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:

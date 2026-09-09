@@ -42,16 +42,22 @@ func TestPool_Basic(t *testing.T) {
 		t.Errorf("expected data to be reset, got %q", v1.data)
 	}
 
-	// Get should return the same value (reset)
+	// A later Get returns a usable value — the recycled one or a fresh one.
+	// sync.Pool guarantees neither ("any item stored in the Pool may be
+	// removed automatically at any time"), and under the race detector it is
+	// cleared on purpose. Asserting strict reuse here made this test fail at
+	// random under `go test -race`, which is what CI runs; TestPool_Reuse
+	// asserts it where it holds, skipping under -race and pinning GOMAXPROCS.
 	v2 := pool.Get()
-	if v2 != v1 {
-		t.Error("expected to get the same value from pool")
+	if v2 == nil {
+		t.Fatal("Get returned nil")
 	}
-	if v2.data != "" {
-		t.Errorf("expected data to remain reset, got %q", v2.data)
-	}
-	if v2.resetCnt != 6 {
-		t.Errorf("resetCnt should not increase on Get, got %d", v2.resetCnt)
+	if v2 == v1 {
+		if v2.data != "" || v2.resetCnt != 6 {
+			t.Errorf("recycled value came back unreset: data=%q resetCnt=%d", v2.data, v2.resetCnt)
+		}
+	} else if v2.data != "new" || v2.resetCnt != 0 {
+		t.Errorf("fresh value did not come from New: data=%q resetCnt=%d", v2.data, v2.resetCnt)
 	}
 }
 
