@@ -6,6 +6,7 @@ import (
 	"embed"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/dnsoa/go/assert"
@@ -315,4 +316,95 @@ func TestMigration_MySQLLegacyTableUpgrade(t *testing.T) {
 	var count int
 	r.NoError(db.QueryRow("SELECT count(*) FROM migrations").Scan(&count))
 	r.Equal(1, count)
+}
+
+// openPostgres is openMySQL's twin for the PostgreSQL-specific tests below,
+// with the same live-round-trip probe and the same env override so a container
+// on a non-default port can be used without editing the file.
+func openPostgres(t *testing.T) *sqldb.DB {
+	t.Helper()
+	dsn := os.Getenv("POSTGRES_TEST_DSN")
+	if dsn == "" {
+		dsn = "user=postgres host=localhost port=5432 password=admin dbname=postgres sslmode=disable"
+	}
+	db, err := sqldb.Open("pgx", dsn)
+	if err != nil {
+		t.Skip("PostgreSQL database not available, skipping test")
+	}
+	if _, err := db.Exec("SELECT 1"); err != nil {
+		_ = db.Close()
+		t.Skip("PostgreSQL database not available, skipping test")
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+// legacyTableWithOwnPrimaryKey is the case the plain ADD PRIMARY KEY cannot
+// serve: a pre-per-service migrations table whose single column is itself the
+// primary key — `create table migrations (version ... primary key)`, as
+// plausible a legacy shape as the bare `(version)` one. Adding a second
+// primary key fails, and the upsert that follows needs (service) to be
+// unique — so the upgrade falls back to a unique index.
+//
+// The assertion that matters is the second MigrateUp. Before the fallback
+// existed the failed ALTER was ignored, and without any unique key MySQL's
+// `on duplicate key update` matched nothing while PostgreSQL's `on conflict
+// (service)` refused to execute: one flavor grew a row per Open, the other
+// could not open at all.
+func legacyTableWithOwnPrimaryKey(t *testing.T, db *sqldb.DB, versionColumn string) {
+	r := assert.New(t)
+	ctx := context.Background()
+
+	_, err := db.Exec("DROP TABLE IF EXISTS migrations")
+	r.NoError(err)
+	_, err = db.Exec("DROP TABLE IF EXISTS users_a")
+	r.NoError(err)
+
+	_, err = db.Exec("CREATE TABLE migrations (" + versionColumn + ")")
+	r.NoError(err)
+	_, err = db.Exec("INSERT INTO migrations (version) VALUES ('002_add_email')")
+	r.NoError(err)
+
+	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
+	r.Equal("002_add_email", migrationVersion(t, db, "default"))
+
+	// Idempotent: the legacy row was adopted rather than duplicated, and a
+	// second run inserts nothing.
+	r.NoError(db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a")))
+	var count int
+	r.NoError(db.QueryRow("SELECT count(*) FROM migrations").Scan(&count))
+	r.Equal(1, count)
+}
+
+func TestMigration_MySQLLegacyTableWithOwnPrimaryKey(t *testing.T) {
+	legacyTableWithOwnPrimaryKey(t, openMySQL(t), "version varchar(191) not null primary key")
+}
+
+func TestMigration_PostgresLegacyTableWithOwnPrimaryKey(t *testing.T) {
+	legacyTableWithOwnPrimaryKey(t, openPostgres(t), "version text primary key")
+}
+
+// TestMigration_MySQLLegacyTableThatCannotBeKeyed is the other half: a legacy
+// table holding more than one row cannot represent a per-service history at
+// all. Neither the primary key nor the unique index can be created, and the
+// upgrade now says so — where it used to continue and let MySQL append a
+// duplicate row on every Open, leaving the recorded version to chance.
+func TestMigration_MySQLLegacyTableThatCannotBeKeyed(t *testing.T) {
+	r := assert.New(t)
+	ctx := context.Background()
+	db := openMySQL(t)
+
+	_, err := db.Exec("DROP TABLE IF EXISTS migrations")
+	r.NoError(err)
+	_, err = db.Exec("DROP TABLE IF EXISTS users_a")
+	r.NoError(err)
+
+	_, err = db.Exec("CREATE TABLE migrations (version text not null)")
+	r.NoError(err)
+	_, err = db.Exec("INSERT INTO migrations (version) VALUES ('001_init'), ('002_add_email')")
+	r.NoError(err)
+
+	err = db.MigrateUp(ctx, subFS(svcAFS, "testdata/svc-a"))
+	r.Error(err)
+	r.True(strings.Contains(err.Error(), "cannot be made unique"))
 }
