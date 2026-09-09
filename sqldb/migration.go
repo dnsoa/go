@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
+	"strings"
 )
 
 var (
@@ -421,16 +422,50 @@ func (m *Migrator) upgradeLegacyMigrationsTable(ctx context.Context) error {
 		`alter table `+m.table+` `+addServiceCol); err != nil {
 		return fmt.Errorf("error upgrading legacy migrations table %v: %w", m.table, err)
 	}
-	// The primary key can only be added once the column exists. A legacy table
-	// has at most one row, so adopting it into the default service cannot
-	// collide. Failure here is not fatal: without the PK the upsert below
-	// degrades to "insert if empty", which is still correct for a single
-	// service — and a hard failure would lock out the very deployments this
-	// path exists to rescue.
-	if _, err := m.db.ExecContext(ctx, `alter table `+m.table+` add primary key (service)`); err != nil {
-		_ = err
+	// The uniqueness the upsert depends on can only be established once the
+	// column exists.
+	return m.ensureServiceUnique(ctx)
+}
+
+// ensureServiceUnique gives the service column the unique key the upsert in
+// createMigrationsTable depends on, trying a primary key first and a unique
+// index second.
+//
+// A failure here used to be ignored, on the theory that the upsert would then
+// degrade to "insert if empty". It does not, on either flavor that reaches this
+// path:
+//
+//   - MySQL's `on duplicate key update` needs a unique key to match against.
+//     Without one it never matches, so every Open inserts another row for the
+//     same service — the bookkeeping table grows without bound and the version
+//     read back afterwards comes from an arbitrary row.
+//   - PostgreSQL's `on conflict (service)` refuses to run at all: "there is no
+//     unique or exclusion constraint matching the ON CONFLICT specification".
+//     The failure is fatal anyway, just one statement later and with a message
+//     that points at the wrong statement.
+//
+// The primary key can fail for a reason that leaves (service) perfectly
+// keyable — a legacy table carrying a primary key of its own — hence the
+// unique-index fallback. When both fail the table cannot support a per-service
+// history, and saying so beats corrupting it on one flavor and crashing on the
+// other, so the error is returned with what the operator has to look at.
+func (m *Migrator) ensureServiceUnique(ctx context.Context) error {
+	if _, err := m.db.ExecContext(ctx, `alter table `+m.table+` add primary key (service)`); err == nil {
+		return nil
 	}
-	return nil
+	// The index name is derived from the table so two migration tables in one
+	// database cannot collide, with dots flattened: a schema-qualified table
+	// name is legal (see migrationTableMatcher) but a dotted index name is not.
+	index := strings.ReplaceAll(m.table, ".", "_") + "_service_key"
+	_, err := m.db.ExecContext(ctx, `create unique index `+index+` on `+m.table+` (service)`)
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("error upgrading legacy migrations table %v: the service column "+
+		"cannot be made unique (neither a primary key nor unique index %v could be created); "+
+		"the table most likely holds more than one row, which a per-service history cannot "+
+		"represent — reduce it to one row (or drop it, losing only the recorded version): %w",
+		m.table, index, err)
 }
 
 // createMigrationsTableSQL returns the flavor-specific CREATE TABLE statement
